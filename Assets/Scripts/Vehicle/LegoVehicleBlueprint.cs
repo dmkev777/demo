@@ -84,40 +84,57 @@ namespace Lego2KDrive
             }
         }
 
-        public void SaveToPrefs()
+        public string ExportToJson()
         {
-            if (!useMinimalBaseByDefault) return;
             SerializedLoadoutData data = new SerializedLoadoutData
             {
                 street = streetBricks,
                 offRoad = offRoadBricks,
                 water = waterBricks
             };
-            string json = JsonUtility.ToJson(data);
-            PlayerPrefs.SetString(SAVE_KEY, json);
-            PlayerPrefs.Save();
+            return JsonUtility.ToJson(data);
         }
 
-        public bool TryLoadFromPrefs()
+        public bool ImportFromJson(string json)
         {
-            if (!PlayerPrefs.HasKey(SAVE_KEY)) return false;
-            string json = PlayerPrefs.GetString(SAVE_KEY, "");
             if (string.IsNullOrEmpty(json)) return false;
-
             try
             {
                 SerializedLoadoutData data = JsonUtility.FromJson<SerializedLoadoutData>(json);
                 if (data != null && data.street != null && data.street.Count > 0)
                 {
                     streetBricks = data.street;
-                    offRoadBricks = data.offRoad;
-                    waterBricks = data.water;
+                    offRoadBricks = (data.offRoad != null && data.offRoad.Count > 0) ? data.offRoad : streetBricks;
+                    waterBricks = (data.water != null && data.water.Count > 0) ? data.water : streetBricks;
                     return true;
                 }
             }
             catch
             {
-                // Ignore corrupted save
+                // Ignore malformed json
+            }
+            return false;
+        }
+
+        public void SaveToPrefs()
+        {
+            if (!useMinimalBaseByDefault) return;
+            string json = ExportToJson();
+            PlayerPrefs.SetString(SAVE_KEY, json);
+            PlayerPrefs.Save();
+
+            if (LegoMultiplayerRoomManager.Instance != null)
+            {
+                LegoMultiplayerRoomManager.Instance.BroadcastMyCustomCarLoadout();
+            }
+        }
+
+        public bool TryLoadFromPrefs()
+        {
+            if (!PlayerPrefs.HasKey(SAVE_KEY)) return false;
+            string json = PlayerPrefs.GetString(SAVE_KEY, "");
+            return ImportFromJson(json);
+        }
             }
             return false;
         }
