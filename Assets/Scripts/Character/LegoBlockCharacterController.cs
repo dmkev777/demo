@@ -164,13 +164,14 @@ namespace Lego2KDrive
                 _jumpQueued = true;
             }
 
-            // Mouse look rotation (paused when Inventory is open or holding Left Alt to click UI)
+            // Mouse look rotation (paused when Inventory or Multiplayer window is open, or holding Left Alt to click UI)
             bool inventoryOpen = MinecraftWorldBuilderAndInventory.Instance != null && MinecraftWorldBuilderAndInventory.Instance.IsInventoryOpen;
+            bool mpOpen = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsRoomPanelOpen;
             bool holdingAlt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-            bool mouseOverTopRightButtons = (Input.mousePosition.x > Screen.width - 260f && Input.mousePosition.y > Screen.height - 175f);
+            bool mouseOverTopRightButtons = (Input.mousePosition.x > Screen.width - 260f && Input.mousePosition.y > Screen.height - 210f);
             bool mouseOverBottomHotbar = (Input.mousePosition.y < 82f && Mathf.Abs(Input.mousePosition.x - Screen.width * 0.5f) < 320f);
 
-            if (!inventoryOpen && !holdingAlt && !mouseOverTopRightButtons && !mouseOverBottomHotbar)
+            if (!inventoryOpen && !mpOpen && !holdingAlt && !mouseOverTopRightButtons && !mouseOverBottomHotbar)
             {
                 float mx = Input.GetAxis("Mouse X");
                 float my = Input.GetAxis("Mouse Y");

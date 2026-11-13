@@ -135,9 +135,6 @@ namespace Lego2KDrive
             string json = PlayerPrefs.GetString(SAVE_KEY, "");
             return ImportFromJson(json);
         }
-            }
-            return false;
-        }
 
         public void ResetAllToSmallBareBase()
         {

@@ -144,7 +144,8 @@ namespace Lego2KDrive
                 SetHotbarSlot(next);
             }
 
-            if (IsInventoryOpen)
+            bool mpOpen = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsRoomPanelOpen;
+            if (IsInventoryOpen || mpOpen)
             {
                 if (_previewWireObj != null) _previewWireObj.SetActive(false);
                 return;
@@ -153,7 +154,7 @@ namespace Lego2KDrive
             UpdateVoxelTargetRaycast();
 
             // Check if mouse is clicking UI buttons on top-right or bottom hotbar
-            bool overTopRight = (Input.mousePosition.x > Screen.width - 260f && Input.mousePosition.y > Screen.height - 175f);
+            bool overTopRight = (Input.mousePosition.x > Screen.width - 260f && Input.mousePosition.y > Screen.height - 210f);
             bool overBottomHotbar = (Input.mousePosition.y < 78f && Mathf.Abs(Input.mousePosition.x - Screen.width * 0.5f) < 310f);
 
             if (!overTopRight && !overBottomHotbar)
@@ -246,19 +247,42 @@ namespace Lego2KDrive
         private void PlaceVoxelBlockAt(Vector3 worldPos)
         {
             if (SelectedHotbarSlot < 0 || SelectedHotbarSlot >= 9) return;
-            VoxelBlockDef def = AllBlockCatalog[_hotbarCatalogIndices[SelectedHotbarSlot]];
+            int catIdx = _hotbarCatalogIndices[SelectedHotbarSlot];
+            VoxelBlockDef def = AllBlockCatalog[catIdx];
 
             LegoBlockCharacterController playerChar = LegoRaceManagerAndHUD.Instance != null
                 ? LegoRaceManagerAndHUD.Instance.PlayerCharacter
                 : null;
-            Quaternion rot = playerChar != null
-                ? Quaternion.Euler(0f, Mathf.Round(playerChar.CurrentLookYaw / 90f) * 90f, 0f)
-                : Quaternion.identity;
+            float snappedYaw = playerChar != null ? Mathf.Round(playerChar.CurrentLookYaw / 90f) * 90f : 0f;
+            Quaternion rot = Quaternion.Euler(0f, snappedYaw, 0f);
 
             SpawnWorldVoxelBlock(_placedBlocksRoot, worldPos, Vector3.one * VOXEL_SIZE, def, rot);
 
+            if (LegoMultiplayerRoomManager.Instance != null)
+                LegoMultiplayerRoomManager.Instance.BroadcastVoxelBlockPlaced(worldPos, snappedYaw, catIdx);
+
             if (LegoProceduralAudio.Instance != null)
                 LegoProceduralAudio.Instance.PlayBrickClick(0.75f);
+        }
+
+        public void SpawnNetworkVoxelBlock(Vector3 worldPos, float yaw, int catalogIndex)
+        {
+            int idx = Mathf.Clamp(catalogIndex, 0, AllBlockCatalog.Length - 1);
+            SpawnWorldVoxelBlock(_placedBlocksRoot, worldPos, Vector3.one * VOXEL_SIZE, AllBlockCatalog[idx], Quaternion.Euler(0f, yaw, 0f));
+        }
+
+        public void BreakNetworkVoxelBlockAt(Vector3 worldPos)
+        {
+            Collider[] cols = Physics.OverlapSphere(worldPos, 0.35f);
+            foreach (var c in cols)
+            {
+                WorldVoxelBlockTag tag = c.GetComponent<WorldVoxelBlockTag>();
+                if (tag != null)
+                {
+                    Destroy(tag.gameObject);
+                    break;
+                }
+            }
         }
 
         public static GameObject SpawnWorldVoxelBlock(
@@ -302,7 +326,12 @@ namespace Lego2KDrive
         private void BreakVoxelBlock(WorldVoxelBlockTag target)
         {
             if (target == null) return;
+            Vector3 pos = target.transform.position;
             Destroy(target.gameObject);
+
+            if (LegoMultiplayerRoomManager.Instance != null)
+                LegoMultiplayerRoomManager.Instance.BroadcastVoxelBlockBroken(pos);
+
             if (LegoProceduralAudio.Instance != null)
                 LegoProceduralAudio.Instance.PlayBrickCrash();
         }

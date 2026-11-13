@@ -1,0 +1,13 @@
+{
+  "name": "lego-2k-drive-multiplayer-server",
+  "version": "1.0.0",
+  "description": "Zero-dependency WebSocket Room Server for LEGO 2K Drive & Minecraft City (Unity WebGL & PC)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
+

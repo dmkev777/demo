@@ -109,6 +109,10 @@ namespace Lego2KDrive
             // Setup Minecraft World Block Builder & 9-Slot Hotbar Inventory
             if (GetComponent<MinecraftWorldBuilderAndInventory>() == null)
                 gameObject.AddComponent<MinecraftWorldBuilderAndInventory>();
+
+            // Setup Cross-Platform WebGL / PC Multiplayer Room Manager
+            if (GetComponent<LegoMultiplayerRoomManager>() == null)
+                gameObject.AddComponent<LegoMultiplayerRoomManager>();
         }
 
         private void SetupLighting()
@@ -403,6 +407,11 @@ namespace Lego2KDrive
             {
                 DrawArcadeHUD();
             }
+
+            if (LegoMultiplayerRoomManager.Instance != null)
+            {
+                LegoMultiplayerRoomManager.Instance.DrawMultiplayerGUI();
+            }
         }
 
         private void DrawOpenWorldOnFootHUD()
@@ -463,6 +472,19 @@ namespace Lego2KDrive
                 if (LegoGarageBuilder.Instance != null)
                     LegoGarageBuilder.Instance.ToggleGarage();
             }
+
+            Color prevMpBg = GUI.backgroundColor;
+            bool mpConn = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
+            GUI.backgroundColor = mpConn ? LegoPalette.BrightGreen : LegoPalette.CyanGlow;
+            string mpLabel = mpConn
+                ? $"[P] PHONG: {LegoMultiplayerRoomManager.Instance.RoomCode} ({LegoMultiplayerRoomManager.Instance.RemotePlayerCount + 1} Nguoi)"
+                : "[P] MULTIPLAYER (Choi Cung Ban)";
+            if (GUI.Button(new Rect(Screen.width - 250f, 150f, 232f, 30f), mpLabel, topBtnStyle))
+            {
+                if (LegoMultiplayerRoomManager.Instance != null)
+                    LegoMultiplayerRoomManager.Instance.ToggleRoomPanel();
+            }
+            GUI.backgroundColor = prevMpBg;
 
             // Draw Minecraft 9-Slot Bottom Hotbar, Crosshair & Full Inventory Modal
             if (MinecraftWorldBuilderAndInventory.Instance != null)
@@ -570,6 +592,17 @@ namespace Lego2KDrive
             if (GUI.Button(new Rect(Screen.width - 235f, 112f, 215f, 26f), destLabel, topBtnStyle))
             {
                 ToggleDestructionMode();
+            }
+
+            bool mpConnRace = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
+            GUI.backgroundColor = mpConnRace ? LegoPalette.BrightGreen : LegoPalette.CyanGlow;
+            string mpRaceLabel = mpConnRace
+                ? $"[P] PHONG: {LegoMultiplayerRoomManager.Instance.RoomCode} ({LegoMultiplayerRoomManager.Instance.RemotePlayerCount + 1})"
+                : "[P] MULTIPLAYER ROOM";
+            if (GUI.Button(new Rect(Screen.width - 235f, 142f, 215f, 28f), mpRaceLabel, topBtnStyle))
+            {
+                if (LegoMultiplayerRoomManager.Instance != null)
+                    LegoMultiplayerRoomManager.Instance.ToggleRoomPanel();
             }
             GUI.backgroundColor = oldBtnBg;
 
