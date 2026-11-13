@@ -263,8 +263,10 @@ namespace Lego2KDrive
         [DllImport("__Internal")] private static extern void LegoWS_Close();
 #endif
 
+        public const string DEFAULT_RAILWAY_WSS_URL = "wss://demo-production-e0a43a7b.up.railway.app";
+
         public bool IsRoomPanelOpen { get; set; } = false;
-        public string ServerUrl = "ws://localhost:8080";
+        public string ServerUrl = DEFAULT_RAILWAY_WSS_URL;
         public string RoomCode = "PHONG1";
         public string MyPlayerName = "Player";
         public string MyPlayerId { get; private set; }
@@ -306,7 +308,7 @@ namespace Lego2KDrive
             MyPlayerId = "P_" + UnityEngine.Random.Range(10000, 99999);
             MyPlayerName = PlayerPrefs.GetString("LegoMP_PlayerName", "TayDua_" + UnityEngine.Random.Range(10, 99));
             RoomCode = PlayerPrefs.GetString("LegoMP_RoomCode", "PHONG1");
-            ServerUrl = PlayerPrefs.GetString("LegoMP_ServerUrl", "ws://localhost:8080");
+            ServerUrl = PlayerPrefs.GetString("LegoMP_ServerUrl_v2", DEFAULT_RAILWAY_WSS_URL);
 
             _boxTex = new Texture2D(1, 1);
             _boxTex.SetPixel(0, 0, Color.white);
@@ -331,11 +333,11 @@ namespace Lego2KDrive
 
             RoomCode = string.IsNullOrEmpty(RoomCode) ? "PHONG1" : RoomCode.Trim().ToUpperInvariant();
             MyPlayerName = string.IsNullOrEmpty(MyPlayerName) ? "TayDua" : MyPlayerName.Trim();
-            ServerUrl = string.IsNullOrEmpty(ServerUrl) ? "ws://localhost:8080" : ServerUrl.Trim();
+            ServerUrl = string.IsNullOrEmpty(ServerUrl) ? DEFAULT_RAILWAY_WSS_URL : ServerUrl.Trim();
 
             PlayerPrefs.SetString("LegoMP_PlayerName", MyPlayerName);
             PlayerPrefs.SetString("LegoMP_RoomCode", RoomCode);
-            PlayerPrefs.SetString("LegoMP_ServerUrl", ServerUrl);
+            PlayerPrefs.SetString("LegoMP_ServerUrl_v2", ServerUrl);
             PlayerPrefs.Save();
 
             _sentInitialJoin = false;

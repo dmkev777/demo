@@ -398,6 +398,7 @@
 "Assets/Scripts/Core/LegoTypesAndFactory.cs"
 "Assets/Scripts/Gameplay/LegoPowerUpAndProps.cs"
 "Assets/Scripts/Garage/LegoGarageBuilder.cs"
+"Assets/Scripts/Multiplayer/LegoMultiplayerRoomManager.cs"
 "Assets/Scripts/Track/LegoTrackAndWorldBuilder.cs"
 "Assets/Scripts/UI/LegoRaceManagerAndHUD.cs"
 "Assets/Scripts/Vehicle/ArcadeKartController.cs"

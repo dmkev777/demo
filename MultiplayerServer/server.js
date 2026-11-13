@@ -6,14 +6,55 @@
 
 const http = require("http");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 
 const PORT = process.env.PORT || 8080;
+const PUBLIC_DIR = path.join(__dirname, "public");
 
 // Map: roomCode -> Map(socketId -> { socket, playerId, playerName, lastJoinPacket, lastStatePacket })
 const rooms = new Map();
 let nextSocketId = 1;
 
+const MIME_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".wasm": "application/wasm",
+    ".data": "application/octet-stream",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".ico": "image/x-icon",
+    ".css": "text/css; charset=utf-8"
+};
+
 const server = http.createServer((req, res) => {
+    // Serve Unity WebGL build if index.html exists in MultiplayerServer/public/
+    let reqPath = (req.url || "/").split("?")[0];
+    if (reqPath === "/") reqPath = "/index.html";
+
+    const safePath = path.normalize(reqPath).replace(/^(\.\.[\/\\])+/, "");
+    const fullPath = path.join(PUBLIC_DIR, safePath);
+
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+        const headers = {};
+        let ext = path.extname(fullPath).toLowerCase();
+
+        // Support Unity WebGL .gz and .br compressed builds
+        if (ext === ".gz") {
+            headers["Content-Encoding"] = "gzip";
+            ext = path.extname(fullPath.slice(0, -3)).toLowerCase();
+        } else if (ext === ".br") {
+            headers["Content-Encoding"] = "br";
+            ext = path.extname(fullPath.slice(0, -3)).toLowerCase();
+        }
+
+        headers["Content-Type"] = MIME_TYPES[ext] || "application/octet-stream";
+        res.writeHead(200, headers);
+        fs.createReadStream(fullPath).pipe(res);
+        return;
+    }
+
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
     let info = "=== LEGO 2K DRIVE & MINECRAFT CITY MULTIPLAYER SERVER ===\n";
     info += `Status: ONLINE (Port ${PORT})\n`;
@@ -21,6 +62,7 @@ const server = http.createServer((req, res) => {
     for (const [roomName, clients] of rooms.entries()) {
         info += ` - Room [${roomName}]: ${clients.size} player(s)\n`;
     }
+    info += "\nTip: Build Unity WebGL into 'MultiplayerServer/public' to play directly at this URL!\n";
     res.end(info);
 });
 
