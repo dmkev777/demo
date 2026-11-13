@@ -31,7 +31,7 @@ namespace Lego2KDrive
 
     /// <summary>
     /// Full Minecraft-style Voxel Building System, 9-Slot Hotbar [1..9], Empty Hand [0],
-    /// Full Block Inventory [B / I], 1m Voxel Grid Highlight, Left-Click Place, Right-Click Break!
+    /// Full Block Inventory [B / I], 1m Voxel Grid Highlight, Left-Click Break, Right-Click Place!
     /// </summary>
     public class MinecraftWorldBuilderAndInventory : MonoBehaviour
     {
@@ -104,9 +104,12 @@ namespace Lego2KDrive
         public void ToggleInventory()
         {
             IsInventoryOpen = !IsInventoryOpen;
+            if (LegoGameInput.Instance != null) LegoGameInput.Instance.RefreshState();
             if (LegoProceduralAudio.Instance != null)
                 LegoProceduralAudio.Instance.PlayBrickClick(0.5f);
         }
+
+        public void CloseInventory() { IsInventoryOpen = false; }
 
         private void Update()
         {
@@ -117,10 +120,10 @@ namespace Lego2KDrive
                 return;
             }
 
-            // Toggle Full Block Inventory with [B] or [I]
-            if (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.I))
+            if (!LegoGameInput.GameplayAllowed)
             {
-                ToggleInventory();
+                if (_previewWireObj != null) _previewWireObj.SetActive(false);
+                return;
             }
 
             // Number keys 1..9 select Hotbar Slots; 0 selects Empty Hand (Tay Không)
@@ -153,20 +156,16 @@ namespace Lego2KDrive
 
             UpdateVoxelTargetRaycast();
 
-            // Check if mouse is clicking UI buttons on top-right or bottom hotbar
-            bool overTopRight = (Input.mousePosition.x > Screen.width - 260f && Input.mousePosition.y > Screen.height - 210f);
-            bool overBottomHotbar = (Input.mousePosition.y < 78f && Mathf.Abs(Input.mousePosition.x - Screen.width * 0.5f) < 310f);
-
-            if (!overTopRight && !overBottomHotbar)
+            if (LegoGameInput.GameplayAllowed)
             {
-                // Left-Click = Place Block (when holding a block in Hotbar 0..8)
-                if (Input.GetMouseButtonDown(0) && SelectedHotbarSlot >= 0 && _hasValidBuildTarget)
+                // Right-Click = Place Block (when holding a block in Hotbar 0..8)
+                if (Input.GetMouseButtonDown(1) && SelectedHotbarSlot >= 0 && _hasValidBuildTarget)
                 {
                     PlaceVoxelBlockAt(_targetPlaceWorldPos);
                 }
 
-                // Right-Click = Break/Remove Block under Crosshair!
-                if (Input.GetMouseButtonDown(1) && _hoveredBreakableBlock != null)
+                // Left-Click = Break/Remove Block under Crosshair!
+                if (Input.GetMouseButtonDown(0) && _hoveredBreakableBlock != null)
                 {
                     BreakVoxelBlock(_hoveredBreakableBlock);
                 }
@@ -190,7 +189,14 @@ namespace Lego2KDrive
             _hasValidBuildTarget = false;
             _hoveredBreakableBlock = null;
 
-            if (Physics.Raycast(ray, out RaycastHit hit, BUILD_REACH, ~0, QueryTriggerInteraction.Ignore))
+            RaycastHit hit = default;
+            float nearest = float.MaxValue;
+            foreach (RaycastHit candidate in Physics.RaycastAll(ray, BUILD_REACH, ~0, QueryTriggerInteraction.Ignore))
+            {
+                if (candidate.collider.GetComponentInParent<LegoBlockCharacterController>() != null) continue;
+                if (candidate.distance < nearest) { nearest = candidate.distance; hit = candidate; }
+            }
+            if (nearest < float.MaxValue)
             {
                 // Ignore hitting the player character itself
                 if (hit.collider.GetComponent<LegoBlockCharacterController>() != null)
@@ -341,7 +347,7 @@ namespace Lego2KDrive
             if (!IsActiveOnFoot) return;
 
             // 1. Center Screen Crosshair (+)
-            if (!IsInventoryOpen)
+            if (LegoGameInput.GameplayAllowed)
             {
                 float cx = Screen.width * 0.5f;
                 float cy = Screen.height * 0.5f;
@@ -411,7 +417,7 @@ namespace Lego2KDrive
             // Active Block Title above Hotbar
             string activeTitle = SelectedHotbarSlot < 0
                 ? "Dang cam: TAY KHONG [0]  |  Bam [1-9] hoac Lan Chuot de chon Block xay nha  |  [B] Mo Tui Do Block"
-                : $"Dang cam: [{SelectedHotbarSlot + 1}] {AllBlockCatalog[_hotbarCatalogIndices[SelectedHotbarSlot]].name}  |  Click Trai: Dat Block  |  Click Phai: Dap Block  |  [B] Tui Do";
+                : $"Dang cam: [{SelectedHotbarSlot + 1}] {AllBlockCatalog[_hotbarCatalogIndices[SelectedHotbarSlot]].name}  |  Click Trai: Pha Block  |  Click Phai: Dat Block  |  [B] Tui Do";
 
             GUIStyle barTitleStyle = new GUIStyle(GUI.skin.label)
             {
@@ -485,6 +491,7 @@ namespace Lego2KDrive
                     if (SelectedHotbarSlot < 0) SelectedHotbarSlot = 0;
                     _hotbarCatalogIndices[SelectedHotbarSlot] = i;
                     IsInventoryOpen = false;
+                    LegoGameInput.Instance.RefreshState();
                     if (LegoProceduralAudio.Instance != null)
                         LegoProceduralAudio.Instance.PlayBrickClick(0.6f);
                 }
@@ -494,6 +501,7 @@ namespace Lego2KDrive
             if (GUI.Button(new Rect(winRect.x + (winW - 180f) * 0.5f, winRect.y + winH - 42f, 180f, 30f), "DONG TUI DO [B]", btnStyle))
             {
                 IsInventoryOpen = false;
+                LegoGameInput.Instance.RefreshState();
             }
         }
 

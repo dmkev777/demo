@@ -117,7 +117,9 @@ namespace Lego2KDrive
         public void ToggleGarage()
         {
             IsGarageOpen = !IsGarageOpen;
-            Time.timeScale = IsGarageOpen ? 0f : 1f;
+            if (LegoGameInput.Instance != null) LegoGameInput.Instance.RefreshState();
+            if (playerKart != null && LegoRaceManagerAndHUD.Instance.IsPlayerOnFoot)
+                playerKart.gameObject.SetActive(IsGarageOpen);
 
             if (IsGarageOpen && playerKart != null)
             {
@@ -184,15 +186,10 @@ namespace Lego2KDrive
 
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.Tab))
-            {
-                ToggleGarage();
-            }
-
             if (!IsGarageOpen || playerKart == null) return;
 
-            // Shortcut 0 or Escape = Clear hand to NULL (Không chọn gạch)
-            if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.Keypad0) || Input.GetKeyDown(KeyCode.Escape))
+            // Escape is reserved for closing the garage; 0 clears the selected brick.
+            if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.Keypad0))
             {
                 ClearSelectedPartToNull();
             }

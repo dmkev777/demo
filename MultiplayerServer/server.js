@@ -8,12 +8,14 @@ const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { RaceLobby } = require("./race-lobby");
 
 const PORT = process.env.PORT || 8080;
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 // Map: roomCode -> Map(socketId -> { socket, playerId, playerName, lastJoinPacket, lastStatePacket })
 const rooms = new Map();
+const raceLobbies = new Map();
 let nextSocketId = 1;
 
 const MIME_TYPES = {
@@ -203,19 +205,36 @@ function handleIncomingMessage(client, rawJson) {
     } catch (e) {
         return;
     }
-    if (!pkt || !pkt.type) return;
+    if (!pkt || typeof pkt.type !== "string") return;
+    // These packets are server-owned; never relay a client-supplied race start/roster.
+    if (["start_race", "race_lobby", "race_error"].includes(pkt.type)) return;
+    if (!client.room && pkt.type !== "join") return;
+    if (pkt.type === "leave") { removeClientFromCurrentRoom(client); return; }
 
-    const roomCode = (pkt.room || "PHONG1").toUpperCase();
+    const roomCode = String(pkt.room || "PHONG1").toUpperCase();
 
-    if (pkt.playerId) client.playerId = pkt.playerId;
+    if (!client.playerId) {
+        if (typeof pkt.playerId !== "string" || !pkt.playerId || pkt.playerId === "SERVER") return;
+        client.playerId = pkt.playerId;
+    }
+    if (pkt.playerId !== client.playerId) return;
     if (pkt.playerName) client.playerName = pkt.playerName;
 
     // Ensure client is registered in the target room
     if (client.room !== roomCode) {
+        if (pkt.type !== "join") return;
+        if (rooms.has(roomCode) && [...rooms.get(roomCode).values()].some(other => other.playerId === client.playerId)) return;
         removeClientFromCurrentRoom(client);
         client.room = roomCode;
         if (!rooms.has(roomCode)) {
             rooms.set(roomCode, new Map());
+            raceLobbies.set(roomCode, new RaceLobby(
+                packet => {
+                    const json = JSON.stringify({ ...packet, room: roomCode, playerId: "SERVER" });
+                    for (const member of rooms.get(roomCode).values()) sendText(member.socket, json);
+                },
+                (member, message) => sendText(member.socket, JSON.stringify({ type: "race_error", room: roomCode, playerId: "SERVER", message }))
+            ));
         }
         rooms.get(roomCode).set(client.id, client);
         console.log(`[JOIN] ${client.playerName} (${client.playerId}) joined room [${roomCode}]`);
@@ -228,12 +247,21 @@ function handleIncomingMessage(client, rawJson) {
                 if (otherClient.lastStateJson) sendText(client.socket, otherClient.lastStateJson);
             }
         }
+        sendText(client.socket, JSON.stringify({ ...raceLobbies.get(roomCode).snapshot(), room: roomCode, playerId: "SERVER" }));
     }
+
+    const lobby = raceLobbies.get(roomCode);
+    if (pkt.type === "race_join") { lobby.join(client); return; }
+    if (pkt.type === "race_leave") { lobby.leave(client); return; }
+    if (pkt.type === "race_start_request") { lobby.start(client); return; }
+    if (pkt.type === "race_finish") { lobby.finish(client, pkt.raceId); return; }
 
     if (pkt.type === "join" || pkt.type === "loadout") {
         client.lastJoinJson = rawJson;
     } else if (pkt.type === "state") {
         client.lastStateJson = rawJson;
+        client.lastState = pkt;
+        lobby.stateChanged(client);
     }
 
     // Broadcast packet to all other players in the same room
@@ -252,6 +280,7 @@ function removeClientFromCurrentRoom(client) {
     const roomMap = rooms.get(client.room);
     if (roomMap) {
         roomMap.delete(client.id);
+        raceLobbies.get(client.room).leave(client);
         if (client.playerId) {
             const leaveMsg = JSON.stringify({
                 type: "leave",
@@ -265,9 +294,13 @@ function removeClientFromCurrentRoom(client) {
         }
         if (roomMap.size === 0) {
             rooms.delete(client.room);
+            raceLobbies.delete(client.room);
         }
     }
     client.room = null;
+    client.lastState = null;
+    client.lastStateJson = null;
+    client.lastJoinJson = null;
 }
 
 function handleDisconnect(client) {
@@ -280,7 +313,7 @@ function handleDisconnect(client) {
 server.listen(PORT, () => {
     console.log("==============================================================");
     console.log(` LEGO 2K Drive & Minecraft City Multiplayer Server is RUNNING!`);
-    console.log(` WebSocket URL: ws://localhost:${PORT}`);
+    console.log(` WebSocket URL: ws://localhost:${server.address().port}`);
     console.log("==============================================================");
 });
 

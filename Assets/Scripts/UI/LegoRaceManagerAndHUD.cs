@@ -73,12 +73,12 @@ namespace Lego2KDrive
             // Build the Bricklandia 3-Biome Circuit + Minecraft Voxel Open World Hub
             _trackData = LegoTrackAndWorldBuilder.BuildBricklandiaCircuit();
 
-            // Spawn Player + 3 AI Racers parked at the Starting Grid
+            if (GetComponent<LegoGameInput>() == null) gameObject.AddComponent<LegoGameInput>();
+            if (GetComponent<LegoRaceLobby>() == null) gameObject.AddComponent<LegoRaceLobby>();
+
+            // Only real players race. Empty slots stay empty.
             AllRacers.Clear();
-            PlayerKart = SpawnRacer("YOU (Clutch)", true, LegoPalette.BrightRed, LegoPalette.BrightYellow, 0, 0f, 1.0f);
-            SpawnRacer("Shadow Z", false, LegoPalette.PurpleRival, LegoPalette.CyanGlow, 1, -4.0f, 0.96f);
-            SpawnRacer("Brickbeard", false, LegoPalette.BrightGreen, LegoPalette.BrightYellow, 2, 4.0f, 0.94f);
-            SpawnRacer("Sky Lane", false, LegoPalette.BrightBlue, LegoPalette.BrightOrange, 3, -1.8f, 0.92f);
+            PlayerKart = SpawnRacer("YOU (Clutch)", LegoPalette.BrightRed, LegoPalette.BrightYellow);
 
             // Spawn Blocky Character for Open-World Exploration
             GameObject charObj = new GameObject("BlockyPlayerCharacter");
@@ -159,15 +159,11 @@ namespace Lego2KDrive
 
         private ArcadeKartController SpawnRacer(
             string name,
-            bool isPlayer,
             Color primary,
-            Color accent,
-            int gridIndex,
-            float aiLaneOffset,
-            float aiSkill)
+            Color accent)
         {
             GameObject kartObj = new GameObject($"LegoRacer_{name}");
-            kartObj.transform.position = _trackData.startGridPositions[gridIndex];
+            kartObj.transform.position = _trackData.startGridPositions[0];
             kartObj.transform.rotation = _trackData.startGridRotation;
 
             kartObj.SetActive(false);
@@ -177,18 +173,12 @@ namespace Lego2KDrive
             ArcadeKartController controller = kartObj.AddComponent<ArcadeKartController>();
 
             controller.racerName = name;
-            controller.isPlayer = isPlayer;
+            controller.isPlayer = true;
             controller.primaryColor = primary;
             controller.accentColor = accent;
             kartObj.SetActive(true);
 
             controller.SetTrackWaypoints(_trackData.waypoints, 1);
-
-            if (!isPlayer)
-            {
-                LegoAIRacer ai = kartObj.AddComponent<LegoAIRacer>();
-                ai.InitializeAI(_trackData.waypoints, aiLaneOffset, aiSkill);
-            }
 
             AllRacers.Add(controller);
             return controller;
@@ -200,11 +190,13 @@ namespace Lego2KDrive
         public void EnterOpenWorldOnFootMode(bool spawnAtVillage)
         {
             StopAllCoroutines();
+            if (LegoRaceLobby.Instance != null) LegoRaceLobby.Instance.Leave();
             if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
                 LegoGarageBuilder.Instance.ToggleGarage();
 
             IsPlayerOnFoot = true;
             CanRacersDrive = false;
+            _raceFinished = false;
 
             // Park all vehicles at the Starting Grid so the player can see them waiting at the Race Hub!
             for (int i = 0; i < AllRacers.Count; i++)
@@ -223,9 +215,13 @@ namespace Lego2KDrive
                 else
                 {
                     // Place character right beside the Race Entry Beacon
-                    PlayerCharacter.transform.position = _trackData.raceEntryBeaconPos + Vector3.up * 1.2f;
+                    PlayerCharacter.transform.position = _trackData.raceEntryBeaconPos +
+                        _trackData.startGridRotation * Vector3.back * (LegoRaceLobby.EntryRadius + 2f) + Vector3.up * 1.2f;
                 }
+                LegoMeshAndMaterialFactory.SetVelocity(PlayerCharacter.GetComponent<Rigidbody>(), Vector3.zero);
             }
+            // The car appears only after a slot is confirmed (or while editing in the garage).
+            PlayerKart.gameObject.SetActive(false);
 
             _centerBannerText = "THE GIOI MO: DI BO TOI VONG SANG XANH DE DUA XE!";
             _centerBannerTimer = 3.5f;
@@ -234,8 +230,10 @@ namespace Lego2KDrive
         /// <summary>
         /// Hops into the Player's custom LEGO vehicle and starts the Race Countdown!
         /// </summary>
-        public void EnterVehicleAndStartRace()
+        public void StartConfirmedRace(int slotIndex)
         {
+            if (LegoRaceLobby.Instance == null || !LegoRaceLobby.Instance.OwnsGridSlot(slotIndex) ||
+                slotIndex < 0 || slotIndex >= _trackData.startGridPositions.Length) return;
             StopAllCoroutines();
             if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
                 LegoGarageBuilder.Instance.ToggleGarage();
@@ -246,10 +244,8 @@ namespace Lego2KDrive
                 PlayerCharacter.gameObject.SetActive(false);
             }
 
-            for (int i = 0; i < AllRacers.Count; i++)
-            {
-                AllRacers[i].ResetForRaceStart(_trackData.startGridPositions[i], _trackData.startGridRotation);
-            }
+            PlayerKart.gameObject.SetActive(true);
+            PlayerKart.ResetForRaceStart(_trackData.startGridPositions[slotIndex], _trackData.startGridRotation);
 
             _raceFinished = false;
             _raceElapsedTime = 0f;
@@ -258,7 +254,8 @@ namespace Lego2KDrive
 
         public void RestartRace()
         {
-            EnterVehicleAndStartRace();
+            // Re-enter through the circle and confirm again; never restart the whole room.
+            EnterOpenWorldOnFootMode(false);
         }
 
         private IEnumerator RaceCountdownRoutine()
@@ -289,8 +286,10 @@ namespace Lego2KDrive
             {
                 if (kart == PlayerKart && !_raceFinished)
                 {
-                    _raceFinished = true;
                     _playerFinishRank = GetRacerPosition(PlayerKart);
+                    _raceFinished = true;
+                    CanRacersDrive = false;
+                    if (LegoRaceLobby.Instance != null) LegoRaceLobby.Instance.Finish();
                     _centerBannerText = $"FINISH! YOU PLACED {FormatRank(_playerFinishRank)}!";
                     _centerBannerTimer = 8f;
                     if (LegoProceduralAudio.Instance != null)
@@ -308,6 +307,9 @@ namespace Lego2KDrive
 
         public int GetRacerPosition(ArcadeKartController target)
         {
+            if (target == PlayerKart && _raceFinished) return _playerFinishRank;
+            if (target == PlayerKart && LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected)
+                return LegoMultiplayerRoomManager.Instance.GetLocalRaceRank(target.TotalRaceProgressScore);
             int rank = 1;
             foreach (var r in AllRacers)
             {
@@ -320,10 +322,14 @@ namespace Lego2KDrive
         public float GetDistanceToRaceZone()
         {
             if (PlayerCharacter == null || _trackData == null) return 999f;
-            float dBeacon = Vector3.Distance(PlayerCharacter.transform.position, _trackData.raceEntryBeaconPos);
-            float dCar = PlayerKart != null ? Vector3.Distance(PlayerCharacter.transform.position, PlayerKart.transform.position) : 999f;
-            return Mathf.Min(dBeacon, dCar);
+            Vector3 offset = PlayerCharacter.transform.position - _trackData.raceEntryBeaconPos;
+            return new Vector2(offset.x, offset.z).magnitude;
         }
+
+        public Vector3 RaceEntryPosition => _trackData.raceEntryBeaconPos;
+        public bool IsInsideRaceZone => IsPlayerOnFoot && PlayerCharacter != null && _trackData != null &&
+            GetDistanceToRaceZone() <= LegoRaceLobby.EntryRadius &&
+            Mathf.Abs(PlayerCharacter.transform.position.y - _trackData.raceEntryBeaconPos.y) <= 3f;
 
         private void Update()
         {
@@ -337,21 +343,14 @@ namespace Lego2KDrive
                 _centerBannerTimer -= Time.deltaTime;
             }
 
-            bool garageClosed = (LegoGarageBuilder.Instance == null || !LegoGarageBuilder.Instance.IsGarageOpen);
-
-            if (garageClosed)
+            if (!LegoGameInput.GameplayAllowed) return;
+            if (LegoGameInput.GameplayAllowed)
             {
                 if (IsPlayerOnFoot)
                 {
-                    // When near the Race Beacon or Parked Car, press [E] or [F] to hop in and Start Race!
-                    if (GetDistanceToRaceZone() < 12.5f && (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.F) || Input.GetKeyDown(KeyCode.Return)))
+                    if (IsInsideRaceZone && (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.F) || Input.GetKeyDown(KeyCode.Return)))
                     {
-                        EnterVehicleAndStartRace();
-                    }
-                    // Or press [G] from anywhere to teleport straight to the Race!
-                    if (Input.GetKeyDown(KeyCode.G))
-                    {
-                        EnterVehicleAndStartRace();
+                        LegoRaceLobby.Instance.OpenPanel();
                     }
                 }
                 else
@@ -392,6 +391,22 @@ namespace Lego2KDrive
         private void OnGUI()
         {
             if (PlayerKart == null) return;
+            GUI.enabled = true;
+            if (LegoGameInput.Instance != null && LegoGameInput.Instance.IsPauseMenuOpen)
+            {
+                LegoGameInput.Instance.DrawPauseMenu();
+                return;
+            }
+            if (LegoRaceLobby.Instance != null && LegoRaceLobby.Instance.IsPanelOpen)
+            {
+                LegoRaceLobby.Instance.DrawPanel();
+                return;
+            }
+            if (LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsRoomPanelOpen)
+            {
+                LegoMultiplayerRoomManager.Instance.DrawMultiplayerGUI();
+                return;
+            }
 
             if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
             {
@@ -399,6 +414,7 @@ namespace Lego2KDrive
                 return;
             }
 
+            GUI.enabled = Cursor.lockState != CursorLockMode.Locked;
             if (IsPlayerOnFoot)
             {
                 DrawOpenWorldOnFootHUD();
@@ -407,6 +423,7 @@ namespace Lego2KDrive
             {
                 DrawArcadeHUD();
             }
+            GUI.enabled = true;
 
             if (LegoMultiplayerRoomManager.Instance != null)
             {
@@ -443,9 +460,9 @@ namespace Lego2KDrive
             textStyle.normal.textColor = new Color(0.84f, 0.92f, 1.0f);
             GUI.Label(new Rect(30f, 92f, 335f, 20f), "[WASD] Di bo | [Shift] Chay nhanh | [Space] Nhay", textStyle);
             GUI.Label(new Rect(30f, 112f, 335f, 20f), "[1-9 / Lan Chuot] Chon Block | [0] Tay Khong", textStyle);
-            GUI.Label(new Rect(30f, 132f, 335f, 20f), "[Click Trai] Dat Block Xay Nha | [Click Phai] Dap Block", textStyle);
-            GUI.Label(new Rect(30f, 152f, 335f, 20f), "[B hoac I] Mo Tui Do 16 Block | [Giu Alt] Hien Chuot", textStyle);
-            GUI.Label(new Rect(30f, 172f, 335f, 20f), "[E / F] Len Xe Dua | [TAB] Garage Do Xe", textStyle);
+            GUI.Label(new Rect(30f, 132f, 335f, 20f), "[Click Trai] Pha Block | [Click Phai] Dat Block", textStyle);
+            GUI.Label(new Rect(30f, 152f, 335f, 20f), "[B / I] Tui Do | [ESC] Menu / Hien Chuot", textStyle);
+            GUI.Label(new Rect(30f, 172f, 335f, 20f), "[E / F] Dang Ky Slot Trong Vong | [TAB] Garage", textStyle);
 
             // Top-Right Action Buttons
             GUIStyle topBtnStyle = new GUIStyle(GUI.skin.button)
@@ -463,9 +480,9 @@ namespace Lego2KDrive
                 if (MinecraftWorldBuilderAndInventory.Instance != null)
                     MinecraftWorldBuilderAndInventory.Instance.ToggleInventory();
             }
-            if (GUI.Button(new Rect(Screen.width - 250f, 84f, 232f, 30f), "[G] LEN XE & BAT DAU DUA NGAY!", topBtnStyle))
+            if (GUI.Button(new Rect(Screen.width - 250f, 84f, 232f, 30f), "[ESC] MENU / THA CHUOT", topBtnStyle))
             {
-                EnterVehicleAndStartRace();
+                LegoGameInput.Instance.OpenPauseMenu();
             }
             if (GUI.Button(new Rect(Screen.width - 250f, 118f, 232f, 28f), "[TAB] GARAGE DO XE", topBtnStyle))
             {
@@ -493,7 +510,7 @@ namespace Lego2KDrive
             }
 
             // Proximity Prompt when standing near the Race Beacon or Parked Car!
-            if (distToRace < 12.5f)
+            if (IsInsideRaceZone)
             {
                 float boxW = 540f;
                 Rect promptRect = new Rect((Screen.width - boxW) * 0.5f, Screen.height - 165f, boxW, 60f);
@@ -507,7 +524,7 @@ namespace Lego2KDrive
                     alignment = TextAnchor.MiddleCenter
                 };
                 promptStyle.normal.textColor = LegoPalette.BrightYellow;
-                GUI.Label(promptRect, "BAN DA DEN KHU VUC DUA XE!\nNhan [E] hoac [F] de LEN XE & BAT DAU DUA!", promptStyle);
+                GUI.Label(promptRect, $"SLOT DUA XE: {LegoRaceLobby.Instance.Slots.Length}/4\nNhan [E] de XAC NHAN / XEM SLOT!", promptStyle);
             }
 
             DrawCenterBannerIfActive();
@@ -535,7 +552,8 @@ namespace Lego2KDrive
             textStyle.normal.textColor = Color.white;
 
             int dispLap = Mathf.Clamp(PlayerKart.CurrentLap, 1, totalLaps);
-            GUI.Label(new Rect(30f, 22f, 290f, 30f), $"POS: {FormatRank(rank)} / {AllRacers.Count}    LAP: {dispLap}/{totalLaps}", headerStyle);
+            int racerCount = LegoRaceLobby.Instance != null ? Mathf.Max(1, LegoRaceLobby.Instance.Participants.Length) : 1;
+            GUI.Label(new Rect(30f, 22f, 290f, 30f), $"POS: {FormatRank(rank)} / {racerCount}    LAP: {dispLap}/{totalLaps}", headerStyle);
             GUI.Label(new Rect(30f, 52f, 290f, 22f), $"TIME: {_raceElapsedTime:F1}s", textStyle);
 
             textStyle.normal.textColor = new Color(0.82f, 0.90f, 1.0f);
@@ -543,7 +561,7 @@ namespace Lego2KDrive
             GUI.Label(new Rect(30f, 100f, 295f, 20f), "[Shift] Drift (Charges Boost) | [Space] Jump", textStyle);
             GUI.Label(new Rect(30f, 120f, 295f, 20f), "[E / Ctrl] Boost  |  [F / Enter] Fire Weapon", textStyle);
             GUI.Label(new Rect(30f, 140f, 295f, 20f), "[J] Xuong Xe Di Bo  |  [K] Bat/Tat Pha Huy", textStyle);
-            GUI.Label(new Rect(30f, 160f, 295f, 20f), "[TAB] Garage Do Xe  |  [R] Restart Race", textStyle);
+            GUI.Label(new Rect(30f, 160f, 295f, 20f), "[ESC] Menu | [R] Ve Khu Dang Ky Dua", textStyle);
 
             // --- 2. TOP CENTER: CURRENT SHAPESHIFTING VEHICLE FORM BADGE ---
             TerrainType activeForm = PlayerKart.Visuals.CurrentForm;
@@ -580,7 +598,7 @@ namespace Lego2KDrive
             {
                 EnterOpenWorldOnFootMode(false);
             }
-            if (GUI.Button(new Rect(Screen.width - 235f, 82f, 215f, 26f), "[R] RESTART RACE", topBtnStyle))
+            if (GUI.Button(new Rect(Screen.width - 235f, 82f, 215f, 26f), "[R] VE KHU DANG KY DUA", topBtnStyle))
             {
                 RestartRace();
             }

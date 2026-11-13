@@ -45,6 +45,7 @@ namespace Lego2KDrive
 
         private void LateUpdate()
         {
+            if (LegoGameInput.Instance != null && LegoGameInput.Instance.IsPauseMenuOpen) return;
             bool inGarage = LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen;
             if (inGarage && targetKart != null)
             {
@@ -84,12 +85,15 @@ namespace Lego2KDrive
                 float dist = 5.5f;
                 Vector3 desiredPos = pivot - (lookRot * Vector3.forward) * dist;
 
-                // Keep camera above ground
-                if (desiredPos.y < targetCharacter.transform.position.y + 0.4f)
-                    desiredPos.y = targetCharacter.transform.position.y + 0.4f;
-
-                transform.position = Vector3.Lerp(transform.position, desiredPos, Time.deltaTime * 16f);
-                transform.LookAt(pivot + Vector3.up * 0.15f);
+                // Preserve exact mouse aim, and pull the camera in before walls/ground.
+                float clearDistance = dist;
+                foreach (RaycastHit hit in Physics.SphereCastAll(pivot, 0.25f, -(lookRot * Vector3.forward), dist, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    if (!hit.collider.transform.IsChildOf(targetCharacter.transform))
+                        clearDistance = Mathf.Min(clearDistance, Mathf.Max(0.1f, hit.distance - 0.1f));
+                }
+                desiredPos = pivot - (lookRot * Vector3.forward) * clearDistance;
+                transform.SetPositionAndRotation(desiredPos, lookRot);
                 _cam.fieldOfView = Mathf.Lerp(_cam.fieldOfView, 60f, Time.deltaTime * 10f);
             }
         }
@@ -119,7 +123,7 @@ namespace Lego2KDrive
 
         private void UpdateRaceFollowCamera()
         {
-            bool lookBack = Input.GetKey(KeyCode.C);
+            bool lookBack = LegoGameInput.GameplayAllowed && Input.GetKey(KeyCode.C);
             Vector3 flatForward = Vector3.ProjectOnPlane(targetKart.transform.forward, Vector3.up).normalized;
             if (flatForward.sqrMagnitude < 0.01f) flatForward = Vector3.forward;
 

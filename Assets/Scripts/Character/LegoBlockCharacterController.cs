@@ -150,8 +150,11 @@ namespace Lego2KDrive
 
         private void Update()
         {
-            if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
+            if (!LegoGameInput.GameplayAllowed)
+            {
+                _jumpQueued = false;
                 return;
+            }
 
             // Toggle 1st Person / 3rd Person view with [V]
             if (Input.GetKeyDown(KeyCode.V))
@@ -164,21 +167,15 @@ namespace Lego2KDrive
                 _jumpQueued = true;
             }
 
-            // Mouse look rotation (paused when Inventory or Multiplayer window is open, or holding Left Alt to click UI)
-            bool inventoryOpen = MinecraftWorldBuilderAndInventory.Instance != null && MinecraftWorldBuilderAndInventory.Instance.IsInventoryOpen;
-            bool mpOpen = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsRoomPanelOpen;
-            bool holdingAlt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-            bool mouseOverTopRightButtons = (Input.mousePosition.x > Screen.width - 260f && Input.mousePosition.y > Screen.height - 210f);
-            bool mouseOverBottomHotbar = (Input.mousePosition.y < 82f && Mathf.Abs(Input.mousePosition.x - Screen.width * 0.5f) < 320f);
-
-            if (!inventoryOpen && !mpOpen && !holdingAlt && !mouseOverTopRightButtons && !mouseOverBottomHotbar)
+            // Relative mouse movement keeps turning even at the edge of the display.
+            if (Cursor.lockState == CursorLockMode.Locked)
             {
-                float mx = Input.GetAxis("Mouse X");
-                float my = Input.GetAxis("Mouse Y");
+                float mx = Input.GetAxisRaw("Mouse X");
+                float my = Input.GetAxisRaw("Mouse Y");
                 if (Mathf.Abs(mx) > 0.001f || Mathf.Abs(my) > 0.001f)
                 {
                     CurrentLookYaw += mx * 3.6f;
-                    CurrentLookPitch = Mathf.Clamp(CurrentLookPitch - my * 2.8f, -55f, 70f);
+                    CurrentLookPitch = Mathf.Clamp(CurrentLookPitch - my * 2.8f, -89f, 89f);
                 }
             }
 
@@ -187,9 +184,11 @@ namespace Lego2KDrive
 
         private void FixedUpdate()
         {
-            if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
+            if (!LegoGameInput.GameplayAllowed)
             {
-                LegoMeshAndMaterialFactory.SetVelocity(_rb, Vector3.zero);
+                _jumpQueued = false;
+                Vector3 velocity = LegoMeshAndMaterialFactory.GetVelocity(_rb);
+                LegoMeshAndMaterialFactory.SetVelocity(_rb, new Vector3(0f, velocity.y, 0f));
                 return;
             }
 

@@ -128,6 +128,9 @@ namespace Lego2KDrive
             CurrentWaypointIndex = 1;
             WaypointsPassedTotal = 0;
             HasFinishedRace = false;
+            TotalRaceProgressScore = 0f;
+            _throttleInput = _steerInput = 0f;
+            _driftHeld = _boostHeld = _jumpPressed = _useItemPressed = false;
             _shieldTimer = 0f;
             _spinOutTimer = 0f;
             _miniTurboTimer = 0f;
@@ -158,16 +161,18 @@ namespace Lego2KDrive
 
             bool raceAllowsDriving = LegoRaceManagerAndHUD.Instance == null || LegoRaceManagerAndHUD.Instance.CanRacersDrive;
 
-            if (isPlayer && raceAllowsDriving && (LegoGarageBuilder.Instance == null || !LegoGarageBuilder.Instance.IsGarageOpen))
+            if (isPlayer && raceAllowsDriving && LegoGameInput.GameplayAllowed)
             {
                 ReadPlayerInput();
             }
-            else if (!raceAllowsDriving)
+            else if (!raceAllowsDriving || isPlayer)
             {
                 _throttleInput = 0f;
                 _steerInput = 0f;
                 _driftHeld = false;
                 _boostHeld = false;
+                _jumpPressed = false;
+                _useItemPressed = false;
             }
 
             if (_useItemPressed)
@@ -176,7 +181,7 @@ namespace Lego2KDrive
                 TryUseHeldPowerUp();
             }
 
-            UpdateWaypointProgress();
+            if (raceAllowsDriving && !HasFinishedRace) UpdateWaypointProgress();
             Visuals.UpdateVisualAnimations(ForwardSpeed, _steerInput, IsDrifting ? _driftDirection : 0f, IsBoosting, HasShield);
         }
 
@@ -403,6 +408,7 @@ namespace Lego2KDrive
                     CurrentLap++;
                     if (LegoRaceManagerAndHUD.Instance != null)
                     {
+                        HasFinishedRace = CurrentLap > LegoRaceManagerAndHUD.Instance.totalLaps;
                         LegoRaceManagerAndHUD.Instance.OnRacerCompletedLap(this);
                     }
                 }

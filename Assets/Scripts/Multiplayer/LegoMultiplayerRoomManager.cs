@@ -30,6 +30,11 @@ namespace Lego2KDrive
         public float hp;
         public int blockIndex;       // For voxel_place
         public string loadoutJson;   // Serialized custom LEGO car blueprint JSON
+        public RaceSlot[] slots;
+        public bool raceActive;
+        public int raceId;
+        public float raceProgress;
+        public string message;
     }
 
     /// <summary>
@@ -43,6 +48,8 @@ namespace Lego2KDrive
         public bool IsOnFoot { get; private set; } = true;
         public float CurrentHP { get; private set; } = 100f;
         public bool IsStunned { get; private set; }
+        public int RaceId { get; private set; }
+        public float RaceProgress { get; private set; }
         public float LastSeenTime { get; set; }
 
         public GameObject CharacterRoot { get; private set; }
@@ -153,6 +160,8 @@ namespace Lego2KDrive
                 PlayerName = pkt.playerName;
 
             IsOnFoot = pkt.isOnFoot;
+            RaceId = pkt.raceId;
+            RaceProgress = pkt.raceProgress;
             _targetPos = pkt.pos;
             _targetYaw = pkt.yaw;
             _targetSpeed = pkt.speed;
@@ -216,6 +225,7 @@ namespace Lego2KDrive
                 // Keep friend's custom vehicle parked at the starting grid when they are walking around on foot!
                 if (VehicleRoot != null)
                 {
+                    VehicleRoot.SetActive(false);
                     VehicleRoot.transform.position = Vector3.Lerp(VehicleRoot.transform.position, _parkedCarPos, dt * 8f);
                     VehicleRoot.transform.rotation = Quaternion.Slerp(VehicleRoot.transform.rotation, _parkedCarRot, dt * 8f);
                     VehicleVisuals.UpdateVisualAnimations(0f, 0f, 0f, false, false);
@@ -228,6 +238,7 @@ namespace Lego2KDrive
 
                 if (VehicleRoot != null)
                 {
+                    VehicleRoot.SetActive(true);
                     if (Vector3.Distance(VehicleRoot.transform.position, _targetPos) > 25f)
                         VehicleRoot.transform.position = _targetPos;
                     else
@@ -281,6 +292,7 @@ namespace Lego2KDrive
         private bool _sentInitialJoin = false;
         private float _syncTimer = 0f;
         private Texture2D _boxTex;
+        private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
 
         public bool IsConnected
         {
@@ -322,7 +334,7 @@ namespace Lego2KDrive
 
         public void ToggleRoomPanel()
         {
-            IsRoomPanelOpen = !IsRoomPanelOpen;
+            LegoGameInput.Instance.ToggleRoom();
             if (LegoProceduralAudio.Instance != null)
                 LegoProceduralAudio.Instance.PlayBrickClick(0.55f);
         }
@@ -441,9 +453,21 @@ namespace Lego2KDrive
             if (_editorSocket != null && _editorSocket.State == WebSocketState.Open)
             {
                 byte[] bytes = Encoding.UTF8.GetBytes(json);
-                _ = _editorSocket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                _ = SendEditorPacketAsync(_editorSocket, bytes);
             }
 #endif
+        }
+
+        private async Task SendEditorPacketAsync(ClientWebSocket socket, byte[] bytes)
+        {
+            await _sendLock.WaitAsync();
+            try
+            {
+                if (socket.State == WebSocketState.Open)
+                    await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+            catch (Exception) { if (socket == _editorSocket) _editorSocketStatus = 3; }
+            finally { _sendLock.Release(); }
         }
 
         public void BroadcastMyCustomCarLoadout()
@@ -462,23 +486,32 @@ namespace Lego2KDrive
             });
         }
 
-        public void BroadcastStartRaceToRoom()
+        public void SendRaceRequest(string type)
         {
-            if (LegoRaceManagerAndHUD.Instance != null)
-            {
-                LegoRaceManagerAndHUD.Instance.EnterVehicleAndStartRace();
-            }
-
             if (IsConnected)
             {
+                // Position must reach the server before the slot request is validated.
+                SendMyLiveStatePacket();
                 SendPacket(new MultiplayerPacket
                 {
-                    type = "start_race",
+                    type = type,
                     room = RoomCode,
                     playerId = MyPlayerId,
-                    playerName = MyPlayerName
+                    playerName = MyPlayerName,
+                    raceId = LegoRaceLobby.Instance != null ? LegoRaceLobby.Instance.ActiveRaceId : 0
                 });
             }
+        }
+
+        public int GetLocalRaceRank(float progress)
+        {
+            int rank = 1;
+            var lobby = LegoRaceLobby.Instance;
+            if (lobby == null) return rank;
+            foreach (var slot in lobby.Participants)
+                if (slot.playerId != MyPlayerId && _remotePlayers.TryGetValue(slot.playerId, out RemotePlayerAvatar avatar) &&
+                    avatar.RaceId == lobby.ActiveRaceId && avatar.RaceProgress > progress) rank++;
+            return rank;
         }
 
         public void BroadcastVoxelBlockPlaced(Vector3 worldPos, float yaw, int catalogIndex)
@@ -509,11 +542,6 @@ namespace Lego2KDrive
 
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.P))
-            {
-                ToggleRoomPanel();
-            }
-
             // 1. Poll WebGL JavaScript WebSocket queue if running in Browser
 #if UNITY_WEBGL && !UNITY_EDITOR
             int wsState = LegoWS_GetStatus();
@@ -654,7 +682,9 @@ namespace Lego2KDrive
                 isBoosting = boosting,
                 hasShield = shield,
                 isStunned = stunned,
-                hp = hp
+                hp = hp,
+                raceId = !onFoot && LegoRaceLobby.Instance != null ? LegoRaceLobby.Instance.ActiveRaceId : 0,
+                raceProgress = !onFoot && mgr.PlayerKart != null ? mgr.PlayerKart.TotalRaceProgressScore : 0f
             });
         }
 
@@ -672,10 +702,18 @@ namespace Lego2KDrive
                 return;
             }
 
-            if (pkt == null || string.IsNullOrEmpty(pkt.playerId) || pkt.playerId == MyPlayerId)
-                return;
+            if (pkt == null) return;
             if (!string.IsNullOrEmpty(pkt.room) && !string.Equals(pkt.room, RoomCode, StringComparison.OrdinalIgnoreCase))
                 return;
+
+            if (pkt.playerId == "SERVER")
+            {
+                if (pkt.type == "race_lobby") LegoRaceLobby.Instance.ReceiveLobby(pkt.slots, pkt.raceActive);
+                else if (pkt.type == "race_error") LegoRaceLobby.Instance.ReceiveError(pkt.message);
+                else if (pkt.type == "start_race") LegoRaceLobby.Instance.ReceiveStart(pkt.slots, pkt.raceId);
+                return;
+            }
+            if (string.IsNullOrEmpty(pkt.playerId) || pkt.playerId == MyPlayerId) return;
 
             if (pkt.type == "leave")
             {
@@ -699,8 +737,7 @@ namespace Lego2KDrive
 
             if (pkt.type == "start_race")
             {
-                if (LegoRaceManagerAndHUD.Instance != null)
-                    LegoRaceManagerAndHUD.Instance.EnterVehicleAndStartRace();
+                // Old clients cannot force unconfirmed room members into a race.
                 return;
             }
 
@@ -862,12 +899,15 @@ namespace Lego2KDrive
             MyPlayerName = GUI.TextField(new Rect(win.x + 195f, y, 275f, 26f), MyPlayerName, 20, fieldStyle);
 
             y += 38f;
+            bool fieldsEnabled = GUI.enabled;
+            GUI.enabled = !IsConnected && _editorSocketStatus != 1;
             GUI.Label(new Rect(win.x + 24f, y, 160f, 26f), "Ma Phong (Room Code):", lblStyle);
             RoomCode = GUI.TextField(new Rect(win.x + 195f, y, 275f, 26f), RoomCode, 16, fieldStyle);
 
             y += 38f;
             GUI.Label(new Rect(win.x + 24f, y, 160f, 26f), "WebSocket Server URL:", lblStyle);
             ServerUrl = GUI.TextField(new Rect(win.x + 195f, y, 275f, 26f), ServerUrl, 128, fieldStyle);
+            GUI.enabled = fieldsEnabled;
 
             y += 38f;
             lblStyle.normal.textColor = IsConnected ? LegoPalette.BrightGreen : LegoPalette.BrightOrange;
@@ -893,11 +933,13 @@ namespace Lego2KDrive
             else
             {
                 GUI.backgroundColor = LegoPalette.CyanGlow;
-                if (GUI.Button(new Rect(win.x + 24f, y, (winW - 58f) * 0.58f, 36f), "GOI CA PHONG CUNG DUA XE!", btnStyle))
+                GUI.enabled = LegoRaceManagerAndHUD.Instance.IsInsideRaceZone;
+                if (GUI.Button(new Rect(win.x + 24f, y, (winW - 58f) * 0.58f, 36f), "DANG KY TAI VONG DUA", btnStyle))
                 {
-                    BroadcastStartRaceToRoom();
                     IsRoomPanelOpen = false;
+                    LegoRaceLobby.Instance.OpenPanel();
                 }
+                GUI.enabled = true;
 
                 GUI.backgroundColor = LegoPalette.BrightRed;
                 if (GUI.Button(new Rect(win.x + 34f + (winW - 58f) * 0.58f, y, (winW - 58f) * 0.42f, 36f), "ROI PHONG (LEAVE)", btnStyle))
@@ -916,6 +958,7 @@ namespace Lego2KDrive
             if (GUI.Button(new Rect(win.x + (winW - 160f) * 0.5f, win.y + winH - 38f, 160f, 28f), "DONG BANG [P]", btnStyle))
             {
                 IsRoomPanelOpen = false;
+                LegoGameInput.Instance.RefreshState();
             }
         }
 

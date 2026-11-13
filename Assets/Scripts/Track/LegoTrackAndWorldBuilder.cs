@@ -27,7 +27,7 @@ namespace Lego2KDrive
     /// <summary>
     /// Procedurally constructs the upgraded Bricklandia 3-Biome Circuit Diorama:
     /// - Sector 1 (Street): Brickopolis Asphalt Speedway with dashed lane lines, studded LEGO curbs,
-    ///   Grandstands with Minifig spectators, Streetlights, and LEGO Skyscrapers.
+    ///   Grandstands, Streetlights, and LEGO Skyscrapers.
     /// - Sector 2 (Off-Road): Red-Rock Canyon Dirt Track with layered LEGO Mesas, Saguaro Cacti, and Wooden Barriers.
     /// - Sector 3 (Water): Crystal River Channel with glossy water, foam strips, Tropical Palm Islands, and a LEGO Lighthouse!
     /// </summary>
@@ -148,6 +148,7 @@ namespace Lego2KDrive
                                              + startDir * backOffset
                                              + startRight * lateral
                                              + Vector3.up * 0.8f;
+                BuildRaceSlotMarker(root.transform, data.startGridPositions[r], data.startGridRotation, r);
             }
 
             // 5. Build Biome Entry Gate Banners
@@ -427,6 +428,33 @@ namespace Lego2KDrive
                 win.AddComponent<MeshFilter>().sharedMesh = LegoMeshAndMaterialFactory.GetBrickMesh(9, 4, 9, BrickShape.FlatTile);
                 win.AddComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(LegoPalette.CyanGlow, true);
             }
+        }
+
+        private static void BuildRaceSlotMarker(Transform parent, Vector3 position, Quaternion rotation, int index)
+        {
+            GameObject marker = new GameObject($"RaceSlot_{index + 1}");
+            marker.transform.SetParent(parent, false);
+            marker.transform.SetPositionAndRotation(new Vector3(position.x, 0.06f, position.z), rotation);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                GameObject stripe = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Object.Destroy(stripe.GetComponent<Collider>());
+                stripe.transform.SetParent(marker.transform, false);
+                stripe.transform.localPosition = new Vector3(side * 1.5f, 0f, 0f);
+                stripe.transform.localScale = new Vector3(0.12f, 0.025f, 4f);
+                stripe.GetComponent<Renderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(LegoPalette.CyanGlow, true);
+            }
+            GameObject text = new GameObject("SlotLabel");
+            text.transform.SetParent(marker.transform, false);
+            text.transform.localPosition = Vector3.up * 2.8f;
+            TextMesh label = text.AddComponent<TextMesh>();
+            label.anchor = TextAnchor.MiddleCenter;
+            label.alignment = TextAlignment.Center;
+            label.fontSize = 48;
+            label.characterSize = 0.10f;
+            LegoRaceSlotMarker state = marker.AddComponent<LegoRaceSlotMarker>();
+            state.SlotIndex = index;
+            state.Label = label;
         }
 
         private static void BuildGrandstand(Transform parent, Vector3 center, Vector3 forward, float trackWidth, int side)
@@ -783,7 +811,7 @@ namespace Lego2KDrive
             beacon.name = "RaceStartZoneBeacon";
             beacon.transform.SetParent(owRoot.transform, false);
             beacon.transform.position = data.raceEntryBeaconPos + Vector3.up * 0.15f;
-            beacon.transform.localScale = new Vector3(5.5f, 0.15f, 5.5f);
+            beacon.transform.localScale = new Vector3(LegoRaceLobby.EntryRadius * 2f, 0.15f, LegoRaceLobby.EntryRadius * 2f);
             beacon.GetComponent<MeshRenderer>().sharedMaterial =
                 LegoMeshAndMaterialFactory.GetPlasticMaterial(LegoPalette.CyanGlow, true);
 
