@@ -52,6 +52,7 @@ namespace Lego2KDrive
         private bool _jumpPressed;
         private bool _boostHeld;
         private bool _useItemPressed;
+        private Vector3 _groundNormal = Vector3.up;
 
         // Internal state
         private float _driftDirection;
@@ -62,6 +63,8 @@ namespace Lego2KDrive
         private float _collisionCooldown;
         private TerrainType _lastDetectedSurface = TerrainType.Street;
         private List<Vector3> _trackWaypoints;
+        private Vector3 _raceStartAnchorPos;
+        private Quaternion _raceStartAnchorRot = Quaternion.identity;
 
         private void Awake()
         {
@@ -116,11 +119,31 @@ namespace Lego2KDrive
             HasFinishedRace = false;
         }
 
+        public void TeleportPoseImmediate(Vector3 targetPos, Quaternion targetRot)
+        {
+            transform.SetPositionAndRotation(targetPos, targetRot);
+            if (Rb != null)
+            {
+                RigidbodyInterpolation prevInterp = Rb.interpolation;
+                Rb.interpolation = RigidbodyInterpolation.None;
+                Rb.position = targetPos;
+                Rb.rotation = targetRot;
+                LegoMeshAndMaterialFactory.SetVelocity(Rb, Vector3.zero);
+                LegoMeshAndMaterialFactory.SetAngularVelocity(Rb, Vector3.zero);
+                Physics.SyncTransforms();
+                Rb.interpolation = prevInterp;
+            }
+            else
+            {
+                Physics.SyncTransforms();
+            }
+        }
+
         public void ResetForRaceStart(Vector3 startPos, Quaternion startRot)
         {
-            LegoMeshAndMaterialFactory.SetVelocity(Rb, Vector3.zero);
-            LegoMeshAndMaterialFactory.SetAngularVelocity(Rb, Vector3.zero);
-            transform.SetPositionAndRotation(startPos, startRot);
+            _raceStartAnchorPos = startPos;
+            _raceStartAnchorRot = startRot;
+            TeleportPoseImmediate(startPos, startRot);
 
             BoostMeter = 65f;
             HeldPowerUp = PowerUpType.None;
@@ -205,18 +228,44 @@ namespace Lego2KDrive
 
             if (Input.GetKeyDown(KeyCode.F) || Input.GetKeyDown(KeyCode.Return))
                 _useItemPressed = true;
-
-            // Manual form preview keys (1 = Street, 2 = Off-Road, 3 = Boat)
-            if (Input.GetKeyDown(KeyCode.Alpha1))
-                Visuals.SwitchToForm(TerrainType.Street, true);
-            else if (Input.GetKeyDown(KeyCode.Alpha2))
-                Visuals.SwitchToForm(TerrainType.OffRoad, true);
-            else if (Input.GetKeyDown(KeyCode.Alpha3))
-                Visuals.SwitchToForm(TerrainType.Water, true);
         }
 
         private void FixedUpdate()
         {
+            // Keep vehicle completely stationary and grounded inside the Garage workshop
+            if (isPlayer && LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
+            {
+                if (LegoRaceManagerAndHUD.Instance != null)
+                {
+                    Vector3 gPos = LegoRaceManagerAndHUD.Instance.GarageInteriorCarPos;
+                    Quaternion gRot = LegoRaceManagerAndHUD.Instance.GarageInteriorCarRot;
+                    Rb.position = gPos;
+                    Rb.rotation = gRot;
+                    transform.SetPositionAndRotation(gPos, gRot);
+                }
+                LegoMeshAndMaterialFactory.SetVelocity(Rb, Vector3.zero);
+                LegoMeshAndMaterialFactory.SetAngularVelocity(Rb, Vector3.zero);
+                return;
+            }
+
+            // Pin player kart to the race starting grid pose during the 3-2-1 countdown
+            if (isPlayer && LegoRaceManagerAndHUD.Instance != null &&
+                !LegoRaceManagerAndHUD.Instance.IsPlayerOnFoot &&
+                !LegoRaceManagerAndHUD.Instance.CanRacersDrive &&
+                (LegoGarageBuilder.Instance == null || (!LegoGarageBuilder.Instance.IsGarageOpen && !LegoGarageBuilder.Instance.IsInTestDrive)))
+            {
+                if (_raceStartAnchorRot != default(Quaternion))
+                {
+                    Rb.position = _raceStartAnchorPos;
+                    Rb.rotation = _raceStartAnchorRot;
+                    transform.SetPositionAndRotation(_raceStartAnchorPos, _raceStartAnchorRot);
+                }
+                LegoMeshAndMaterialFactory.SetVelocity(Rb, Vector3.zero);
+                LegoMeshAndMaterialFactory.SetAngularVelocity(Rb, Vector3.zero);
+                ForwardSpeed = 0f;
+                return;
+            }
+
             // Force zero angular velocity every physics step so the kart never spins on its own
             LegoMeshAndMaterialFactory.SetAngularVelocity(Rb, Vector3.zero);
 
@@ -234,6 +283,17 @@ namespace Lego2KDrive
             Vector3 currentVel = LegoMeshAndMaterialFactory.GetVelocity(Rb);
             Vector3 flatForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
             ForwardSpeed = Vector3.Dot(currentVel, flatForward);
+
+            VehicleAeroStats aeroStats = (Visuals != null && Visuals.Loadout != null)
+                ? Visuals.Loadout.CalculateVehicleStats()
+                : new VehicleAeroStats { topSpeedMultiplier = 1f, accelMultiplier = 1f, gripMultiplier = 1f, offRoadMultiplier = 1f };
+            if (aeroStats.brickCount <= 0)
+            {
+                aeroStats.topSpeedMultiplier = 1f;
+                aeroStats.accelMultiplier = 1f;
+                aeroStats.gripMultiplier = 1f;
+                aeroStats.offRoadMultiplier = 1f;
+            }
 
             // 1. Handle Jump
             if (_jumpPressed && IsGrounded)
@@ -290,12 +350,12 @@ namespace Lego2KDrive
                 IsBoosting = false;
             }
 
-            // 4. Calculate Target Speed & Terrain Handling
+            // 4. Calculate Target Speed & Aerodynamic / Wheel-Tier Handling
             float terrainSpeedMult = 1.0f;
-            if (CurrentTerrain == TerrainType.OffRoad) terrainSpeedMult = 0.96f;
-            else if (CurrentTerrain == TerrainType.Water) terrainSpeedMult = 0.98f;
+            if (CurrentTerrain == TerrainType.OffRoad)
+                terrainSpeedMult = Mathf.Clamp(0.86f * aeroStats.offRoadMultiplier, 0.72f, 1.08f);
 
-            float maxSpd = (IsBoosting ? boostTopSpeed : baseTopSpeed) * terrainSpeedMult;
+            float maxSpd = (IsBoosting ? boostTopSpeed : baseTopSpeed) * terrainSpeedMult * aeroStats.topSpeedMultiplier;
             float targetForwardSpeed = 0f;
             if (_throttleInput > 0.01f)
                 targetForwardSpeed = _throttleInput * maxSpd;
@@ -304,10 +364,10 @@ namespace Lego2KDrive
             else if (IsBoosting)
                 targetForwardSpeed = maxSpd;
 
-            float accelRate = IsBoosting ? acceleration * 1.9f : acceleration;
+            float accelRate = (IsBoosting ? acceleration * 1.9f : acceleration) * aeroStats.accelMultiplier;
             float newForwardSpeed = Mathf.MoveTowards(ForwardSpeed, targetForwardSpeed, accelRate * Time.fixedDeltaTime);
 
-            // 5. Steering Rotation (Only rotate when player/AI actually steers AND is moving or pressing throttle)
+            // 5. Steering Rotation (Only rotate when player steers AND is moving or pressing throttle)
             float effectiveSteer = _steerInput;
             if (IsDrifting)
             {
@@ -321,12 +381,20 @@ namespace Lego2KDrive
                 transform.Rotate(Vector3.up, yawDelta, Space.World);
             }
 
-            // 6. Apply Arcade Velocity (with slight lateral slide when drifting or on water)
-            flatForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
+            // Smoothly align pitch/roll to terrain slope normal
+            Vector3 targetUp = IsGrounded ? _groundNormal : Vector3.up;
+            Quaternion slopeAlign = Quaternion.FromToRotation(transform.up, targetUp) * transform.rotation;
+            transform.rotation = Quaternion.Slerp(transform.rotation, slopeAlign, 10f * Time.fixedDeltaTime);
+
+            // 6. Apply Arcade Velocity (modulated by aerodynamics grip multiplier)
+            flatForward = Vector3.ProjectOnPlane(transform.forward, _groundNormal).normalized;
+            if (flatForward.sqrMagnitude < 0.01f)
+                flatForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
+
             Vector3 lateralVel = Vector3.ProjectOnPlane(currentVel, flatForward);
             lateralVel.y = 0f;
 
-            float gripFactor = IsDrifting ? 4.5f : (CurrentTerrain == TerrainType.Water ? 6.0f : 11.5f);
+            float gripFactor = (IsDrifting ? 4.5f : 11.5f) * aeroStats.gripMultiplier;
             Vector3 dampedLateral = Vector3.Lerp(lateralVel, Vector3.zero, gripFactor * Time.fixedDeltaTime);
 
             float newY = currentVel.y;
@@ -336,7 +404,32 @@ namespace Lego2KDrive
             }
 
             Vector3 finalVel = flatForward * newForwardSpeed + dampedLateral;
-            finalVel.y = newY;
+            if (!IsGrounded || _jumpPressed || currentVel.y > 0.5f)
+            {
+                finalVel.y = newY;
+            }
+
+            // Clamp vehicle inside Test Drive Arena bounds when test-driving from Garage
+            if (isPlayer && LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsInTestDrive && LegoRaceManagerAndHUD.Instance != null)
+            {
+                Bounds tb = LegoRaceManagerAndHUD.Instance.TestArenaBounds;
+                if (tb.size.x > 2f && tb.size.z > 2f)
+                {
+                    float pad = 1.6f;
+                    float minX = tb.min.x + pad;
+                    float maxX = tb.max.x - pad;
+                    float minZ = tb.min.z + pad;
+                    float maxZ = tb.max.z - pad;
+                    Vector3 pos = transform.position;
+                    bool clamped = false;
+                    if (pos.x < minX) { pos.x = minX; if (finalVel.x < 0f) finalVel.x = 0f; clamped = true; }
+                    else if (pos.x > maxX) { pos.x = maxX; if (finalVel.x > 0f) finalVel.x = 0f; clamped = true; }
+                    if (pos.z < minZ) { pos.z = minZ; if (finalVel.z < 0f) finalVel.z = 0f; clamped = true; }
+                    else if (pos.z > maxZ) { pos.z = maxZ; if (finalVel.z > 0f) finalVel.z = 0f; clamped = true; }
+                    if (clamped) transform.position = pos;
+                }
+            }
+
             LegoMeshAndMaterialFactory.SetVelocity(Rb, finalVel);
         }
 
@@ -364,28 +457,26 @@ namespace Lego2KDrive
             if (foundGround)
             {
                 IsGrounded = true;
+                _groundNormal = bestHit.normal.y > 0.55f ? bestHit.normal : Vector3.up;
                 TerrainSurfaceTag tag = bestHit.collider.GetComponent<TerrainSurfaceTag>();
                 if (tag == null && bestHit.collider.transform.parent != null)
                     tag = bestHit.collider.transform.parent.GetComponent<TerrainSurfaceTag>();
 
                 if (tag != null)
                 {
-                    CurrentTerrain = tag.terrainType;
-                    // Automatically transform vehicle when entering a new terrain type!
+                    TerrainType mapped = tag.terrainType == TerrainType.Water ? TerrainType.OffRoad : tag.terrainType;
+                    CurrentTerrain = mapped;
                     if (CurrentTerrain != _lastDetectedSurface)
                     {
                         _lastDetectedSurface = CurrentTerrain;
-                        Visuals.SwitchToForm(CurrentTerrain, true);
-                    }
-                    else if (Visuals.CurrentForm != CurrentTerrain && !isPlayer)
-                    {
-                        Visuals.SwitchToForm(CurrentTerrain, true);
+                        Visuals.SwitchToForm(CurrentTerrain, false);
                     }
                 }
             }
             else
             {
                 IsGrounded = false;
+                _groundNormal = Vector3.up;
             }
         }
 

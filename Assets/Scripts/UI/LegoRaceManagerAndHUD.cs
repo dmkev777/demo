@@ -19,6 +19,7 @@ namespace Lego2KDrive
         public List<ArcadeKartController> AllRacers { get; private set; } = new List<ArcadeKartController>();
         public ArcadeKartController PlayerKart { get; private set; }
         public LegoBlockCharacterController PlayerCharacter { get; private set; }
+        public IReadOnlyList<Vector3> TrackWaypoints => _trackData != null ? _trackData.waypoints : null;
 
         private LegoTrackAndWorldBuilder.BuiltTrackData _trackData;
         private string _centerBannerText = "";
@@ -50,6 +51,9 @@ namespace Lego2KDrive
                 return;
             }
             Instance = this;
+#pragma warning disable CS0618
+            Physics.autoSyncTransforms = true;
+#pragma warning restore CS0618
 
             _whiteTex = new Texture2D(1, 1);
             _whiteTex.SetPixel(0, 0, Color.white);
@@ -78,7 +82,7 @@ namespace Lego2KDrive
 
             // Only real players race. Empty slots stay empty.
             AllRacers.Clear();
-            PlayerKart = SpawnRacer("YOU (Clutch)", LegoPalette.BrightRed, LegoPalette.BrightYellow);
+            PlayerKart = SpawnRacer("YOU (Clutch)", LegoPalette.BrightOrange, LegoPalette.SilverMetallic);
 
             // Spawn Blocky Character for Open-World Exploration
             GameObject charObj = new GameObject("BlockyPlayerCharacter");
@@ -106,11 +110,15 @@ namespace Lego2KDrive
                 garage = gameObject.AddComponent<LegoGarageBuilder>();
             garage.playerKart = PlayerKart;
 
-            // Setup Minecraft World Block Builder & 9-Slot Hotbar Inventory
+            // Setup Top-Right Minimap Renderer
+            if (GetComponent<LegoMinimapRenderer>() == null)
+                gameObject.AddComponent<LegoMinimapRenderer>();
+
+            // Setup Minecraft stub component (world building disabled)
             if (GetComponent<MinecraftWorldBuilderAndInventory>() == null)
                 gameObject.AddComponent<MinecraftWorldBuilderAndInventory>();
 
-            // Setup Cross-Platform WebGL / PC Multiplayer Room Manager
+            // Setup Cross-Platform PC Multiplayer Room Manager
             if (GetComponent<LegoMultiplayerRoomManager>() == null)
                 gameObject.AddComponent<LegoMultiplayerRoomManager>();
         }
@@ -128,33 +136,38 @@ namespace Lego2KDrive
                 existingLight = lightObj.AddComponent<Light>();
                 existingLight.type = LightType.Directional;
             }
-            existingLight.transform.rotation = Quaternion.Euler(46f, -38f, 0f);
-            existingLight.color = new Color(1.0f, 0.97f, 0.92f);
-            existingLight.intensity = 0.95f;
+            // Warm relaxed golden-hour sunlight matching LowPolySunriseSun in northern sky
+            existingLight.transform.rotation = Quaternion.LookRotation(new Vector3(160f, -175f, -380f).normalized, Vector3.up);
+            existingLight.color = new Color(1.0f, 0.88f, 0.72f);
+            existingLight.intensity = 0.88f;
             existingLight.shadows = LightShadows.Soft;
-            existingLight.shadowStrength = 0.80f;
+            existingLight.shadowStrength = 0.68f;
+            existingLight.shadowBias = 0.03f;
+            existingLight.shadowNormalBias = 0.35f;
 
             GameObject fillObj = new GameObject("Sky Fill Light");
             fillObj.transform.SetParent(transform, false);
-            fillObj.transform.rotation = Quaternion.Euler(35f, 145f, 0f);
+            fillObj.transform.rotation = Quaternion.Euler(35f, -25f, 0f);
             Light fillLight = fillObj.AddComponent<Light>();
             fillLight.type = LightType.Directional;
-            fillLight.color = new Color(0.55f, 0.68f, 0.85f);
-            fillLight.intensity = 0.25f;
+            fillLight.color = new Color(0.52f, 0.68f, 0.88f);
+            fillLight.intensity = 0.14f;
             fillLight.shadows = LightShadows.None;
 
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.34f, 0.38f, 0.44f);
-            RenderSettings.ambientEquatorColor = new Color(0.28f, 0.30f, 0.34f);
-            RenderSettings.ambientGroundColor = new Color(0.18f, 0.20f, 0.22f);
+            RenderSettings.ambientSkyColor = new Color(0.38f, 0.48f, 0.64f);
+            RenderSettings.ambientEquatorColor = new Color(0.36f, 0.34f, 0.32f);
+            RenderSettings.ambientGroundColor = new Color(0.20f, 0.22f, 0.18f);
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogColor = new Color(0.68f, 0.84f, 0.98f);
-            RenderSettings.fogDensity = 0.0012f;
+            RenderSettings.fogColor = new Color(0.82f, 0.78f, 0.74f);
+            RenderSettings.fogDensity = 0.00055f;
 
-            QualitySettings.shadowDistance = 150f;
+            QualitySettings.shadowDistance = 220f;
+            QualitySettings.shadowCascades = 4;
             QualitySettings.antiAliasing = 4;
+            QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
         }
 
         private ArcadeKartController SpawnRacer(
@@ -184,6 +197,13 @@ namespace Lego2KDrive
             return controller;
         }
 
+        private void SnapCameraImmediate()
+        {
+            if (Camera.main == null) return;
+            LegoArcadeCamera arcadeCam = Camera.main.GetComponent<LegoArcadeCamera>();
+            if (arcadeCam != null) arcadeCam.SnapToTargetImmediate();
+        }
+
         /// <summary>
         /// Switches to On-Foot Open-World Mode (Character walking around the Minecraft voxel world).
         /// </summary>
@@ -191,14 +211,12 @@ namespace Lego2KDrive
         {
             StopAllCoroutines();
             if (LegoRaceLobby.Instance != null) LegoRaceLobby.Instance.Leave();
-            if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
-                LegoGarageBuilder.Instance.ToggleGarage();
+            if (LegoGarageBuilder.Instance != null) LegoGarageBuilder.Instance.ForceExitAllGarageModes();
 
             IsPlayerOnFoot = true;
             CanRacersDrive = false;
             _raceFinished = false;
 
-            // Park all vehicles at the Starting Grid so the player can see them waiting at the Race Hub!
             for (int i = 0; i < AllRacers.Count; i++)
             {
                 AllRacers[i].ResetForRaceStart(_trackData.startGridPositions[i], _trackData.startGridRotation);
@@ -214,17 +232,108 @@ namespace Lego2KDrive
                 }
                 else
                 {
-                    // Place character right beside the Race Entry Beacon
                     PlayerCharacter.transform.position = _trackData.raceEntryBeaconPos +
                         _trackData.startGridRotation * Vector3.back * (LegoRaceLobby.EntryRadius + 2f) + Vector3.up * 1.2f;
                 }
                 LegoMeshAndMaterialFactory.SetVelocity(PlayerCharacter.GetComponent<Rigidbody>(), Vector3.zero);
             }
-            // The car appears only after a slot is confirmed (or while editing in the garage).
-            PlayerKart.gameObject.SetActive(false);
+            if (PlayerKart != null) PlayerKart.gameObject.SetActive(false);
+            SnapCameraImmediate();
 
-            _centerBannerText = "THE GIOI MO: DI BO TOI VONG SANG XANH DE DUA XE!";
+            _centerBannerText = "MOTORVERSE: DEN CONG GARAGE [TAB] DE DO XE HOAC DEN VONG SANG DE DUA!";
             _centerBannerTimer = 3.5f;
+        }
+
+        public void StageCarInsideGarageWorkshop()
+        {
+            StopAllCoroutines();
+            if (LegoRaceLobby.Instance != null) LegoRaceLobby.Instance.Leave();
+            IsPlayerOnFoot = true;
+            CanRacersDrive = false;
+
+            if (PlayerKart != null && _trackData != null)
+            {
+                PlayerKart.gameObject.SetActive(true);
+                PlayerKart.TeleportPoseImmediate(_trackData.garageInteriorCarPos, _trackData.garageInteriorCarRot);
+            }
+
+            if (PlayerCharacter != null && _trackData != null)
+            {
+                PlayerCharacter.gameObject.SetActive(true);
+                Vector3 carPos = _trackData.garageInteriorCarPos;
+                Vector3 toDoor = _trackData.garageEntryPos - carPos;
+                toDoor.y = 0f;
+                if (toDoor.sqrMagnitude < 0.01f) toDoor = Vector3.forward;
+                toDoor.Normalize();
+                Vector3 rightDir = Vector3.Cross(Vector3.up, toDoor).normalized;
+
+                Vector2 charXZ = new Vector2(PlayerCharacter.transform.position.x, PlayerCharacter.transform.position.z);
+                Vector2 carXZ = new Vector2(carPos.x, carPos.z);
+                float distToCar = Vector2.Distance(charXZ, carXZ);
+                if (distToCar > 6.2f || distToCar < 2.6f)
+                {
+                    Vector3 standPos = carPos + toDoor * 3.2f - rightDir * 2.2f + Vector3.up * 0.25f;
+                    PlayerCharacter.transform.position = standPos;
+                }
+
+                Vector3 lookDir = (carPos + Vector3.up * 0.45f) - (PlayerCharacter.transform.position + Vector3.up * 1.5f);
+                if (lookDir.sqrMagnitude > 0.01f)
+                {
+                    Quaternion lookRot = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
+                    PlayerCharacter.CurrentLookYaw = lookRot.eulerAngles.y;
+                    PlayerCharacter.CurrentLookPitch = 14f;
+                    PlayerCharacter.transform.rotation = Quaternion.Euler(0f, PlayerCharacter.CurrentLookYaw, 0f);
+                }
+                LegoMeshAndMaterialFactory.SetVelocity(PlayerCharacter.GetComponent<Rigidbody>(), Vector3.zero);
+            }
+            SnapCameraImmediate();
+        }
+
+        public void ExitGarageToDoorOnFoot()
+        {
+            StopAllCoroutines();
+            IsPlayerOnFoot = true;
+            CanRacersDrive = false;
+            _raceFinished = false;
+
+            if (PlayerKart != null)
+            {
+                if (_trackData != null && _trackData.startGridPositions != null && _trackData.startGridPositions.Length > 0)
+                {
+                    PlayerKart.TeleportPoseImmediate(_trackData.startGridPositions[0], _trackData.startGridRotation);
+                }
+                PlayerKart.gameObject.SetActive(false);
+            }
+
+            if (PlayerCharacter != null && _trackData != null)
+            {
+                PlayerCharacter.gameObject.SetActive(true);
+                Vector3 fwd = _trackData.garageInteriorCarRot * Vector3.forward;
+                fwd.y = 0f;
+                if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward;
+                PlayerCharacter.transform.position = _trackData.garageEntryPos + fwd.normalized * 4.0f + Vector3.up * 1.15f;
+                LegoMeshAndMaterialFactory.SetVelocity(PlayerCharacter.GetComponent<Rigidbody>(), Vector3.zero);
+            }
+            SnapCameraImmediate();
+        }
+
+        public void EnterTestDriveArenaMode()
+        {
+            StopAllCoroutines();
+            if (LegoRaceLobby.Instance != null) LegoRaceLobby.Instance.Leave();
+            IsPlayerOnFoot = false;
+            CanRacersDrive = true;
+            _raceFinished = false;
+
+            if (PlayerCharacter != null)
+                PlayerCharacter.gameObject.SetActive(false);
+
+            if (PlayerKart != null && _trackData != null)
+            {
+                PlayerKart.gameObject.SetActive(true);
+                PlayerKart.ResetForRaceStart(_trackData.testArenaSpawnPos, _trackData.testArenaSpawnRot);
+            }
+            SnapCameraImmediate();
         }
 
         /// <summary>
@@ -235,8 +344,8 @@ namespace Lego2KDrive
             if (LegoRaceLobby.Instance == null || !LegoRaceLobby.Instance.OwnsGridSlot(slotIndex) ||
                 slotIndex < 0 || slotIndex >= _trackData.startGridPositions.Length) return;
             StopAllCoroutines();
-            if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
-                LegoGarageBuilder.Instance.ToggleGarage();
+            if (LegoGarageBuilder.Instance != null)
+                LegoGarageBuilder.Instance.ForceExitAllGarageModes();
 
             IsPlayerOnFoot = false;
             if (PlayerCharacter != null)
@@ -246,6 +355,7 @@ namespace Lego2KDrive
 
             PlayerKart.gameObject.SetActive(true);
             PlayerKart.ResetForRaceStart(_trackData.startGridPositions[slotIndex], _trackData.startGridRotation);
+            SnapCameraImmediate();
 
             _raceFinished = false;
             _raceElapsedTime = 0f;
@@ -331,9 +441,31 @@ namespace Lego2KDrive
             GetDistanceToRaceZone() <= LegoRaceLobby.EntryRadius &&
             Mathf.Abs(PlayerCharacter.transform.position.y - _trackData.raceEntryBeaconPos.y) <= 3f;
 
+        public Vector3 GarageEntryPosition => _trackData != null ? _trackData.garageEntryPos : Vector3.zero;
+        public Vector3 GarageInteriorCarPos => _trackData != null ? _trackData.garageInteriorCarPos : Vector3.zero;
+        public Quaternion GarageInteriorCarRot => _trackData != null ? _trackData.garageInteriorCarRot : Quaternion.identity;
+        public Bounds TestArenaBounds => _trackData != null ? _trackData.testArenaBounds : new Bounds();
+
+        public float GetDistanceToGarageZone()
+        {
+            if (PlayerCharacter == null || _trackData == null) return float.MaxValue;
+            Vector3 charPos = PlayerCharacter.transform.position;
+            Vector2 p = new Vector2(charPos.x, charPos.z);
+            float dGate = Vector2.Distance(p, new Vector2(_trackData.garageEntryPos.x, _trackData.garageEntryPos.z));
+            float dBay  = Vector2.Distance(p, new Vector2(_trackData.garageInteriorCarPos.x, _trackData.garageInteriorCarPos.z));
+            return Mathf.Min(dGate, dBay);
+        }
+
+        public bool IsInsideGarageZone => IsPlayerOnFoot && PlayerCharacter != null && _trackData != null &&
+            GetDistanceToGarageZone() <= 8.5f &&
+            Mathf.Abs(PlayerCharacter.transform.position.y - _trackData.garageEntryPos.y) <= 5.0f;
+
+        public bool CanOpenGarageNow => IsInsideGarageZone;
+
         private void Update()
         {
-            if (!IsPlayerOnFoot && CanRacersDrive && !_raceFinished)
+            bool inTestDrive = LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsInTestDrive;
+            if (!IsPlayerOnFoot && !inTestDrive && CanRacersDrive && !_raceFinished)
             {
                 _raceElapsedTime += Time.deltaTime;
             }
@@ -341,6 +473,16 @@ namespace Lego2KDrive
             if (_centerBannerTimer > 0f)
             {
                 _centerBannerTimer -= Time.deltaTime;
+            }
+
+            if (IsPlayerOnFoot && IsInsideGarageZone && !LegoGameInput.HasModal && LegoGameInput.Instance != null)
+            {
+                // Garage only opens when the player explicitly presses [TAB], [E], [F], or [Enter] inside the zone.
+                if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.F) || Input.GetKeyDown(KeyCode.Return))
+                {
+                    LegoGameInput.Instance.ToggleGarage();
+                    return;
+                }
             }
 
             if (!LegoGameInput.GameplayAllowed) return;
@@ -355,14 +497,13 @@ namespace Lego2KDrive
                 }
                 else
                 {
-                    if (Input.GetKeyDown(KeyCode.R))
+                    // During Test Drive: block exiting car [J] and restarting race [R]; player uses [TAB] to return to Garage
+                    if (!inTestDrive)
                     {
-                        RestartRace();
-                    }
-                    // Press [J] while driving to exit vehicle and return to Open-World On-Foot mode!
-                    if (Input.GetKeyDown(KeyCode.J))
-                    {
-                        EnterOpenWorldOnFootMode(false);
+                        if (Input.GetKeyDown(KeyCode.R))
+                            RestartRace();
+                        if (Input.GetKeyDown(KeyCode.J))
+                            EnterOpenWorldOnFootMode(false);
                     }
                 }
             }
@@ -411,6 +552,10 @@ namespace Lego2KDrive
             if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
             {
                 LegoGarageBuilder.Instance.DrawGarageOverlayGUI();
+                if (LegoGameInput.IsGarageAimingActive)
+                {
+                    DrawCenterCrosshair();
+                }
                 return;
             }
 
@@ -425,6 +570,16 @@ namespace Lego2KDrive
             }
             GUI.enabled = true;
 
+            if (!LegoGameInput.HasModal)
+            {
+                DrawCenterCrosshair();
+            }
+
+            if (LegoGarageBuilder.Instance != null)
+            {
+                LegoGarageBuilder.Instance.DrawGarageOverlayGUI();
+            }
+
             if (LegoMultiplayerRoomManager.Instance != null)
             {
                 LegoMultiplayerRoomManager.Instance.DrawMultiplayerGUI();
@@ -433,14 +588,15 @@ namespace Lego2KDrive
 
         private void DrawOpenWorldOnFootHUD()
         {
-            DrawSolidBox(new Rect(18f, 16f, 355f, 195f), new Color(0.08f, 0.10f, 0.14f, 0.86f));
+            DrawSolidBox(new Rect(16f, 194f, 345f, 142f), new Color(0.08f, 0.11f, 0.16f, 0.88f));
+            DrawSolidBox(new Rect(16f, 194f, 345f, 3f), LegoPalette.CyanGlow);
 
             GUIStyle headerStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 17,
+                fontSize = 18,
                 fontStyle = FontStyle.Bold
             };
-            headerStyle.normal.textColor = LegoPalette.BrightGreen;
+            headerStyle.normal.textColor = LegoPalette.BrightYellow;
 
             GUIStyle textStyle = new GUIStyle(GUI.skin.label)
             {
@@ -450,70 +606,69 @@ namespace Lego2KDrive
             textStyle.normal.textColor = Color.white;
 
             string camMode = (PlayerCharacter != null && PlayerCharacter.IsFirstPerson) ? "Goc Nhin Thu 1 (FPP)" : "Goc Nhin Thu 3 (TPP)";
-            GUI.Label(new Rect(30f, 22f, 335f, 24f), "THANH PHO THE GIOI MO (MINECRAFT CITY)", headerStyle);
-            GUI.Label(new Rect(30f, 46f, 335f, 20f), $"Camera: {camMode} (Bam [V] de doi)", textStyle);
+            GUI.Label(new Rect(28f, 200f, 325f, 24f), "MOTORVERSE VALLEY", headerStyle);
+            GUI.Label(new Rect(28f, 226f, 325f, 20f), $"Camera: {camMode} ([V] de doi)", textStyle);
 
+            float distGarage = GetDistanceToGarageZone();
             float distToRace = GetDistanceToRaceZone();
-            textStyle.normal.textColor = LegoPalette.CyanGlow;
-            GUI.Label(new Rect(30f, 68f, 335f, 20f), $"Khoang cach toi Khu Dua Xe: {distToRace:F0}m", textStyle);
+            textStyle.normal.textColor = LegoPalette.BrightOrange;
+            GUI.Label(new Rect(28f, 248f, 325f, 20f), $"Cong Garage [G]: {distGarage:F0}m   |   Khu Dua [R]: {distToRace:F0}m", textStyle);
 
             textStyle.normal.textColor = new Color(0.84f, 0.92f, 1.0f);
-            GUI.Label(new Rect(30f, 92f, 335f, 20f), "[WASD] Di bo | [Shift] Chay nhanh | [Space] Nhay", textStyle);
-            GUI.Label(new Rect(30f, 112f, 335f, 20f), "[1-9 / Lan Chuot] Chon Block | [0] Tay Khong", textStyle);
-            GUI.Label(new Rect(30f, 132f, 335f, 20f), "[Click Trai] Pha Block | [Click Phai] Dat Block", textStyle);
-            GUI.Label(new Rect(30f, 152f, 335f, 20f), "[B / I] Tui Do | [ESC] Menu / Hien Chuot", textStyle);
-            GUI.Label(new Rect(30f, 172f, 335f, 20f), "[E / F] Dang Ky Slot Trong Vong | [TAB] Garage", textStyle);
+            GUI.Label(new Rect(28f, 272f, 325f, 20f), "[WASD] Di bo | [Shift] Chay | [Space] Nhay | [Giu M] Ban do", textStyle);
+            GUI.Label(new Rect(28f, 292f, 325f, 20f), "[TAB / E] Mo Garage (tai cong) | [P] Phong Choi", textStyle);
+            GUI.Label(new Rect(28f, 312f, 325f, 20f), "[ESC] Menu / Hien Chuot", textStyle);
 
-            // Top-Right Action Buttons
+            // Top-Right Action Buttons (Top-Left is dedicated to the default small minimap)
             GUIStyle topBtnStyle = new GUIStyle(GUI.skin.button)
             {
-                fontSize = 12,
+                fontSize = 11,
                 fontStyle = FontStyle.Bold
             };
-            if (GUI.Button(new Rect(Screen.width - 250f, 16f, 232f, 30f), "[V] DOI GOC NHIN THU 1 / THU 3", topBtnStyle))
+            if (GUI.Button(new Rect(Screen.width - 216f, 14f, 200f, 28f), "[V] DOI GOC NHIN 1 / 3", topBtnStyle))
             {
                 if (PlayerCharacter != null)
                     PlayerCharacter.ToggleCameraPerspective();
             }
-            if (GUI.Button(new Rect(Screen.width - 250f, 50f, 232f, 30f), "[B] MO TUI DO BLOCK XAY NHA", topBtnStyle))
-            {
-                if (MinecraftWorldBuilderAndInventory.Instance != null)
-                    MinecraftWorldBuilderAndInventory.Instance.ToggleInventory();
-            }
-            if (GUI.Button(new Rect(Screen.width - 250f, 84f, 232f, 30f), "[ESC] MENU / THA CHUOT", topBtnStyle))
+            if (GUI.Button(new Rect(Screen.width - 216f, 46f, 200f, 28f), "[ESC] MENU / THA CHUOT", topBtnStyle))
             {
                 LegoGameInput.Instance.OpenPauseMenu();
             }
-            if (GUI.Button(new Rect(Screen.width - 250f, 118f, 232f, 28f), "[TAB] GARAGE DO XE", topBtnStyle))
+
+            bool prevEnabled = GUI.enabled;
+            GUI.enabled = prevEnabled && CanOpenGarageNow;
+            if (GUI.Button(new Rect(Screen.width - 216f, 78f, 200f, 28f), CanOpenGarageNow ? "[TAB] MO GARAGE" : "DEN CONG GARAGE DE DO XE", topBtnStyle))
             {
-                if (LegoGarageBuilder.Instance != null)
-                    LegoGarageBuilder.Instance.ToggleGarage();
+                if (LegoGameInput.Instance != null)
+                    LegoGameInput.Instance.ToggleGarage();
             }
+            GUI.enabled = prevEnabled;
 
             Color prevMpBg = GUI.backgroundColor;
             bool mpConn = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
             GUI.backgroundColor = mpConn ? LegoPalette.BrightGreen : LegoPalette.CyanGlow;
             string mpLabel = mpConn
-                ? $"[P] PHONG: {LegoMultiplayerRoomManager.Instance.RoomCode} ({LegoMultiplayerRoomManager.Instance.RemotePlayerCount + 1} Nguoi)"
-                : "[P] MULTIPLAYER (Choi Cung Ban)";
-            if (GUI.Button(new Rect(Screen.width - 250f, 150f, 232f, 30f), mpLabel, topBtnStyle))
+                ? $"[P] PHONG: {LegoMultiplayerRoomManager.Instance.RoomCode} ({LegoMultiplayerRoomManager.Instance.RemotePlayerCount + 1})"
+                : "[P] MULTIPLAYER (Choi Chung)";
+            if (GUI.Button(new Rect(Screen.width - 216f, 110f, 200f, 28f), mpLabel, topBtnStyle))
             {
                 if (LegoMultiplayerRoomManager.Instance != null)
                     LegoMultiplayerRoomManager.Instance.ToggleRoomPanel();
             }
             GUI.backgroundColor = prevMpBg;
 
-            // Draw Minecraft 9-Slot Bottom Hotbar, Crosshair & Full Inventory Modal
-            if (MinecraftWorldBuilderAndInventory.Instance != null)
-            {
-                MinecraftWorldBuilderAndInventory.Instance.DrawMinecraftHotbarAndInventoryGUI();
-            }
+            // Bottom-center quick shortcut pill (Image 3 style)
+            float pillW = 300f;
+            Rect pill = new Rect((Screen.width - pillW) * 0.5f, Screen.height - 44f, pillW, 30f);
+            DrawSolidBox(pill, new Color(0.08f, 0.11f, 0.16f, 0.86f));
+            GUIStyle pillStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            pillStyle.normal.textColor = Color.white;
+            GUI.Label(pill, "[TAB] GARAGE (tai cong)   |   [Giu M] BAN DO", pillStyle);
 
-            // Proximity Prompt when standing near the Race Beacon or Parked Car!
             if (IsInsideRaceZone)
             {
                 float boxW = 540f;
-                Rect promptRect = new Rect((Screen.width - boxW) * 0.5f, Screen.height - 165f, boxW, 60f);
+                Rect promptRect = new Rect((Screen.width - boxW) * 0.5f, Screen.height - 120f, boxW, 60f);
                 DrawSolidBox(promptRect, new Color(0.06f, 0.12f, 0.18f, 0.92f));
                 DrawSolidBox(new Rect(promptRect.x, promptRect.y, boxW, 4f), LegoPalette.CyanGlow);
 
@@ -526,135 +681,185 @@ namespace Lego2KDrive
                 promptStyle.normal.textColor = LegoPalette.BrightYellow;
                 GUI.Label(promptRect, $"SLOT DUA XE: {LegoRaceLobby.Instance.Slots.Length}/4\nNhan [E] de XAC NHAN / XEM SLOT!", promptStyle);
             }
+            else if (IsInsideGarageZone)
+            {
+                float boxW = 540f;
+                Rect promptRect = new Rect((Screen.width - boxW) * 0.5f, Screen.height - 120f, boxW, 58f);
+                DrawSolidBox(promptRect, new Color(0.08f, 0.12f, 0.18f, 0.92f));
+                DrawSolidBox(new Rect(promptRect.x, promptRect.y, boxW, 4f), LegoPalette.BrightOrange);
+
+                GUIStyle promptStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 17,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter
+                };
+                promptStyle.normal.textColor = LegoPalette.BrightYellow;
+                GUI.Label(promptRect, "CONG GARAGE MOTORVERSE\nNhan [TAB] hoac [E] de Vao Phong Thiet Ke & Chay Thu!", promptStyle);
+            }
 
             DrawCenterBannerIfActive();
+
+            if (LegoMinimapRenderer.Instance != null && PlayerCharacter != null)
+            {
+                LegoMinimapRenderer.Instance.DrawMinimapGUI(
+                    PlayerCharacter.transform.position,
+                    PlayerCharacter.CurrentLookYaw,
+                    GarageEntryPosition,
+                    RaceEntryPosition);
+            }
         }
 
         private void DrawArcadeHUD()
         {
+            bool inTestDrive = LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsInTestDrive;
             int rank = GetRacerPosition(PlayerKart);
 
-            // --- 1. TOP LEFT: RACE STANDINGS, LAP & CONTROLS ---
-            DrawSolidBox(new Rect(18f, 16f, 315f, 195f), new Color(0.08f, 0.10f, 0.14f, 0.84f));
+            // --- 1. LEFT STATUS PANEL (below Top-Left minimap): STANDINGS / TEST DRIVE STATUS ---
+            float tlWidth = inTestDrive ? 380f : 320f;
+            float tlLabelW = inTestDrive ? 355f : 295f;
+            DrawSolidBox(new Rect(16f, 194f, tlWidth, inTestDrive ? 150f : 185f), new Color(0.08f, 0.10f, 0.14f, 0.86f));
+            DrawSolidBox(new Rect(16f, 194f, tlWidth, 3f), inTestDrive ? LegoPalette.BrightGreen : LegoPalette.BrightYellow);
 
             GUIStyle headerStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 22,
+                fontSize = inTestDrive ? 18 : 20,
                 fontStyle = FontStyle.Bold
             };
-            headerStyle.normal.textColor = LegoPalette.BrightYellow;
+            headerStyle.normal.textColor = inTestDrive ? LegoPalette.BrightGreen : LegoPalette.BrightYellow;
 
             GUIStyle textStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 13,
-                fontStyle = FontStyle.Bold
-            };
-            textStyle.normal.textColor = Color.white;
-
-            int dispLap = Mathf.Clamp(PlayerKart.CurrentLap, 1, totalLaps);
-            int racerCount = LegoRaceLobby.Instance != null ? Mathf.Max(1, LegoRaceLobby.Instance.Participants.Length) : 1;
-            GUI.Label(new Rect(30f, 22f, 290f, 30f), $"POS: {FormatRank(rank)} / {racerCount}    LAP: {dispLap}/{totalLaps}", headerStyle);
-            GUI.Label(new Rect(30f, 52f, 290f, 22f), $"TIME: {_raceElapsedTime:F1}s", textStyle);
-
-            textStyle.normal.textColor = new Color(0.82f, 0.90f, 1.0f);
-            GUI.Label(new Rect(30f, 80f, 295f, 20f), "[WASD / Arrows] Drive & Steer", textStyle);
-            GUI.Label(new Rect(30f, 100f, 295f, 20f), "[Shift] Drift (Charges Boost) | [Space] Jump", textStyle);
-            GUI.Label(new Rect(30f, 120f, 295f, 20f), "[E / Ctrl] Boost  |  [F / Enter] Fire Weapon", textStyle);
-            GUI.Label(new Rect(30f, 140f, 295f, 20f), "[J] Xuong Xe Di Bo  |  [K] Bat/Tat Pha Huy", textStyle);
-            GUI.Label(new Rect(30f, 160f, 295f, 20f), "[ESC] Menu | [R] Ve Khu Dang Ky Dua", textStyle);
-
-            // --- 2. TOP CENTER: CURRENT SHAPESHIFTING VEHICLE FORM BADGE ---
-            TerrainType activeForm = PlayerKart.Visuals.CurrentForm;
-            Color badgeColor = activeForm == TerrainType.Street ? LegoPalette.BrightRed :
-                               (activeForm == TerrainType.OffRoad ? LegoPalette.BrightOrange : LegoPalette.CyanGlow);
-            string formTitle = activeForm == TerrainType.Street ? "FORM: STREET SUPERCAR (ASPHALT)" :
-                               (activeForm == TerrainType.OffRoad ? "FORM: OFF-ROAD MONSTER BUGGY (DIRT)" : "FORM: HYDRO SPEEDBOAT (WATER)");
-
-            float centerW = 370f;
-            DrawSolidBox(new Rect((Screen.width - centerW) * 0.5f, 16f, centerW, 40f), new Color(0.08f, 0.10f, 0.14f, 0.88f));
-            DrawSolidBox(new Rect((Screen.width - centerW) * 0.5f, 16f, centerW, 5f), badgeColor);
-
-            GUIStyle centerBadgeStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 15,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter
-            };
-            centerBadgeStyle.normal.textColor = badgeColor;
-            GUI.Label(new Rect((Screen.width - centerW) * 0.5f, 20f, centerW, 32f), formTitle, centerBadgeStyle);
-
-            // --- 3. TOP RIGHT: ACTION BUTTONS ---
-            GUIStyle topBtnStyle = new GUIStyle(GUI.skin.button)
             {
                 fontSize = 12,
                 fontStyle = FontStyle.Bold
             };
-            if (GUI.Button(new Rect(Screen.width - 235f, 16f, 215f, 30f), "[TAB] GARAGE BUILDER", topBtnStyle))
+            textStyle.normal.textColor = Color.white;
+
+            if (inTestDrive)
             {
-                if (LegoGarageBuilder.Instance != null)
-                    LegoGarageBuilder.Instance.ToggleGarage();
+                GUI.Label(new Rect(28f, 202f, tlLabelW, 28f), "BAI TAP LAI THU (TEST DRIVE)", headerStyle);
+                textStyle.normal.textColor = new Color(0.84f, 0.94f, 1.0f);
+                GUI.Label(new Rect(28f, 236f, tlLabelW, 20f), "[WASD] Lai & Re  |  [Shift] Drift  |  [E] Boost", textStyle);
+                GUI.Label(new Rect(28f, 258f, tlLabelW, 20f), "Di Chuot: Xoay Camera 360 kiem tra xe", textStyle);
+                GUI.Label(new Rect(28f, 280f, tlLabelW, 20f), "Khong the xuong xe / Khong ra khoi bai tap", textStyle);
+                textStyle.normal.textColor = LegoPalette.BrightYellow;
+                GUI.Label(new Rect(28f, 302f, tlLabelW, 20f), "[TAB] Thoat Lai Thu -> Ve Phong Garage", textStyle);
             }
-            if (GUI.Button(new Rect(Screen.width - 235f, 50f, 215f, 28f), "[J] XUONG XE DI BO (Open World)", topBtnStyle))
+            else
             {
-                EnterOpenWorldOnFootMode(false);
-            }
-            if (GUI.Button(new Rect(Screen.width - 235f, 82f, 215f, 26f), "[R] VE KHU DANG KY DUA", topBtnStyle))
-            {
-                RestartRace();
+                int dispLap = Mathf.Clamp(PlayerKart.CurrentLap, 1, totalLaps);
+                int racerCount = LegoRaceLobby.Instance != null ? Mathf.Max(1, LegoRaceLobby.Instance.Participants.Length) : 1;
+                GUI.Label(new Rect(28f, 202f, 295f, 28f), $"VI TRI: {FormatRank(rank)} / {racerCount}   VONG: {dispLap}/{totalLaps}", headerStyle);
+                GUI.Label(new Rect(28f, 232f, 295f, 20f), $"THOI GIAN: {_raceElapsedTime:F1}s", textStyle);
+
+                textStyle.normal.textColor = new Color(0.82f, 0.90f, 1.0f);
+                GUI.Label(new Rect(28f, 258f, 295f, 20f), "[WASD] Lai xe  |  [Shift] Drift  |  [Space] Nhay", textStyle);
+                GUI.Label(new Rect(28f, 278f, 295f, 20f), "[E / Ctrl] Nitro Boost  |  [F / Enter] Vu khi", textStyle);
+                GUI.Label(new Rect(28f, 298f, 295f, 20f), "[J] Xuong xe di bo  |  [Giu M] Ban do", textStyle);
+                GUI.Label(new Rect(28f, 318f, 295f, 20f), "[ESC] Menu  |  [R] Ve khu dang ky dua", textStyle);
             }
 
+            // --- 2. TOP CENTER BADGE ---
+            WheelSizeTier wTier = (PlayerKart.Visuals != null && PlayerKart.Visuals.Loadout != null)
+                ? PlayerKart.Visuals.Loadout.wheelSizeTier
+                : WheelSizeTier.Medium;
+            Color badgeColor = inTestDrive ? LegoPalette.BrightGreen :
+                               (PlayerKart.CurrentTerrain == TerrainType.OffRoad ? LegoPalette.BrightOrange : LegoPalette.CyanGlow);
+            string formTitle = inTestDrive
+                ? $"CHAY THU TRONG BAI TAP | BANH XE: {wTier}"
+                : (PlayerKart.CurrentTerrain == TerrainType.OffRoad ? $"DUONG DAT (OFF-ROAD) | BANH: {wTier}" : $"DUONG NHUA (ASPHALT) | BANH: {wTier}");
+
+            float centerW = 360f;
+            DrawSolidBox(new Rect((Screen.width - centerW) * 0.5f, 14f, centerW, 38f), new Color(0.08f, 0.10f, 0.14f, 0.88f));
+            DrawSolidBox(new Rect((Screen.width - centerW) * 0.5f, 14f, centerW, 4f), badgeColor);
+
+            GUIStyle centerBadgeStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 14,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter
+            };
+            centerBadgeStyle.normal.textColor = badgeColor;
+            GUI.Label(new Rect((Screen.width - centerW) * 0.5f, 18f, centerW, 30f), formTitle, centerBadgeStyle);
+
+            // --- 3. TOP RIGHT: CONTEXTUAL BUTTONS ---
+            GUIStyle topBtnStyle = new GUIStyle(GUI.skin.button)
+            {
+                fontSize = 11,
+                fontStyle = FontStyle.Bold
+            };
             Color oldBtnBg = GUI.backgroundColor;
-            bool destOn = LegoVehicleVisualAndDamage.DestructionModeEnabled;
-            GUI.backgroundColor = destOn ? LegoPalette.BrightOrange : LegoPalette.BrightGreen;
-            string destLabel = destOn ? "[K] TRU MAU XE: BAT" : "[K] TRU MAU XE: TAT (Bat Tu)";
-            if (GUI.Button(new Rect(Screen.width - 235f, 112f, 215f, 26f), destLabel, topBtnStyle))
+            if (inTestDrive)
             {
-                ToggleDestructionMode();
+                GUI.backgroundColor = LegoPalette.BrightOrange;
+                if (GUI.Button(new Rect(Screen.width - 252f, 14f, 236f, 32f), "[TAB] THOAT LAI THU -> GARAGE", topBtnStyle))
+                {
+                    if (LegoGameInput.Instance != null)
+                        LegoGameInput.Instance.ToggleGarage();
+                }
+                GUI.backgroundColor = oldBtnBg;
             }
+            else
+            {
+                if (GUI.Button(new Rect(Screen.width - 216f, 14f, 200f, 28f), "[J] XUONG XE DI BO", topBtnStyle))
+                    EnterOpenWorldOnFootMode(false);
+                if (GUI.Button(new Rect(Screen.width - 216f, 46f, 200f, 26f), "[R] VE KHU DANG KY DUA", topBtnStyle))
+                    RestartRace();
 
-            bool mpConnRace = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
-            GUI.backgroundColor = mpConnRace ? LegoPalette.BrightGreen : LegoPalette.CyanGlow;
-            string mpRaceLabel = mpConnRace
-                ? $"[P] PHONG: {LegoMultiplayerRoomManager.Instance.RoomCode} ({LegoMultiplayerRoomManager.Instance.RemotePlayerCount + 1})"
-                : "[P] MULTIPLAYER ROOM";
-            if (GUI.Button(new Rect(Screen.width - 235f, 142f, 215f, 28f), mpRaceLabel, topBtnStyle))
-            {
-                if (LegoMultiplayerRoomManager.Instance != null)
-                    LegoMultiplayerRoomManager.Instance.ToggleRoomPanel();
+                bool destOn = LegoVehicleVisualAndDamage.DestructionModeEnabled;
+                GUI.backgroundColor = destOn ? LegoPalette.BrightOrange : LegoPalette.BrightGreen;
+                string destLabel = destOn ? "[K] TRU MAU XE: BAT" : "[K] TRU MAU XE: TAT";
+                if (GUI.Button(new Rect(Screen.width - 216f, 76f, 200f, 26f), destLabel, topBtnStyle))
+                    ToggleDestructionMode();
+
+                bool mpConnRace = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
+                GUI.backgroundColor = mpConnRace ? LegoPalette.BrightGreen : LegoPalette.CyanGlow;
+                string mpRaceLabel = mpConnRace
+                    ? $"[P] PHONG: {LegoMultiplayerRoomManager.Instance.RoomCode} ({LegoMultiplayerRoomManager.Instance.RemotePlayerCount + 1})"
+                    : "[P] MULTIPLAYER ROOM";
+                if (GUI.Button(new Rect(Screen.width - 216f, 106f, 200f, 28f), mpRaceLabel, topBtnStyle))
+                {
+                    if (LegoMultiplayerRoomManager.Instance != null)
+                        LegoMultiplayerRoomManager.Instance.ToggleRoomPanel();
+                }
+                GUI.backgroundColor = oldBtnBg;
             }
-            GUI.backgroundColor = oldBtnBg;
 
             // --- 4. BOTTOM LEFT: VEHICLE HP BAR & POWER-UP SLOT ---
-            float blY = Screen.height - 125f;
-            DrawSolidBox(new Rect(18f, blY, 310f, 105f), new Color(0.08f, 0.10f, 0.14f, 0.85f));
+            if (!inTestDrive)
+            {
+                float blY = Screen.height - 125f;
+                DrawSolidBox(new Rect(18f, blY, 310f, 105f), new Color(0.08f, 0.10f, 0.14f, 0.85f));
 
-            float healthPct = PlayerKart.Visuals.HealthNormalized;
-            Color hpColor = !LegoVehicleVisualAndDamage.DestructionModeEnabled ? LegoPalette.CyanGlow :
-                            (PlayerKart.Visuals.IsStunned ? LegoPalette.BrightRed :
-                            (healthPct > 0.45f ? LegoPalette.BrightGreen : LegoPalette.BrightOrange));
+                float healthPct = PlayerKart.Visuals.HealthNormalized;
+                Color hpColor = !LegoVehicleVisualAndDamage.DestructionModeEnabled ? LegoPalette.CyanGlow :
+                                (PlayerKart.Visuals.IsStunned ? LegoPalette.BrightRed :
+                                (healthPct > 0.45f ? LegoPalette.BrightGreen : LegoPalette.BrightOrange));
 
-            string hpStatus = !LegoVehicleVisualAndDamage.DestructionModeEnabled
-                ? "CHE DO SAT THUONG: TAT (Xe Bat Tu)"
-                : (PlayerKart.Visuals.IsStunned
-                    ? $"BI CHOANG! Hoi phuc sau: {PlayerKart.Visuals.StunTimeRemaining:F1}s"
-                    : $"MAU XE (HP): {PlayerKart.Visuals.CurrentHP:F0} / {PlayerKart.Visuals.MaxHP:F0}");
+                string hpStatus = !LegoVehicleVisualAndDamage.DestructionModeEnabled
+                    ? "CHE DO SAT THUONG: TAT (Xe Bat Tu)"
+                    : (PlayerKart.Visuals.IsStunned
+                        ? $"BI CHOANG! Hoi phuc sau: {PlayerKart.Visuals.StunTimeRemaining:F1}s"
+                        : $"MAU XE (HP): {PlayerKart.Visuals.CurrentHP:F0} / {PlayerKart.Visuals.MaxHP:F0}");
 
-            textStyle.normal.textColor = PlayerKart.Visuals.IsStunned ? LegoPalette.BrightYellow : Color.white;
-            GUI.Label(new Rect(30f, blY + 10f, 285f, 22f), hpStatus, textStyle);
-            DrawProgressBar(
-                new Rect(30f, blY + 34f, 285f, 18f),
-                PlayerKart.Visuals.IsStunned ? (1f - PlayerKart.Visuals.StunTimeRemaining / LegoVehicleVisualAndDamage.STUN_DURATION) : healthPct,
-                hpColor);
+                textStyle.normal.textColor = PlayerKart.Visuals.IsStunned ? LegoPalette.BrightYellow : Color.white;
+                GUI.Label(new Rect(30f, blY + 10f, 285f, 22f), hpStatus, textStyle);
+                DrawProgressBar(
+                    new Rect(30f, blY + 34f, 285f, 18f),
+                    PlayerKart.Visuals.IsStunned ? (1f - PlayerKart.Visuals.StunTimeRemaining / LegoVehicleVisualAndDamage.STUN_DURATION) : healthPct,
+                    hpColor);
 
-            string itemText = FormatPowerUpName(PlayerKart.HeldPowerUp);
-            Color itemCol = PlayerKart.HeldPowerUp == PowerUpType.None ? LegoPalette.LightGrey : LegoPalette.CyanGlow;
-            textStyle.normal.textColor = itemCol;
-            GUI.Label(new Rect(30f, blY + 64f, 285f, 26f), $"WEAPON [F]: {itemText}", textStyle);
+                string itemText = FormatPowerUpName(PlayerKart.HeldPowerUp);
+                Color itemCol = PlayerKart.HeldPowerUp == PowerUpType.None ? LegoPalette.LightGrey : LegoPalette.CyanGlow;
+                textStyle.normal.textColor = itemCol;
+                GUI.Label(new Rect(30f, blY + 64f, 285f, 26f), $"VU KHI [F]: {itemText}", textStyle);
+            }
 
             // --- 5. BOTTOM RIGHT: SPEEDOMETER & BOOST NITRO BAR ---
-            float brX = Screen.width - 290f;
-            float brY = Screen.height - 125f;
-            DrawSolidBox(new Rect(brX, brY, 272f, 105f), new Color(0.08f, 0.10f, 0.14f, 0.85f));
+            float brX = Screen.width - 280f;
+            float brY = Screen.height - 115f;
+            DrawSolidBox(new Rect(brX, brY, 262f, 98f), new Color(0.08f, 0.10f, 0.14f, 0.88f));
+            DrawSolidBox(new Rect(brX, brY, 262f, 3f), LegoPalette.CyanGlow);
 
             GUIStyle speedStyle = new GUIStyle(GUI.skin.label)
             {
@@ -662,12 +867,12 @@ namespace Lego2KDrive
                 fontStyle = FontStyle.Bold
             };
             speedStyle.normal.textColor = PlayerKart.IsBoosting ? LegoPalette.BrightOrange : LegoPalette.BrightYellow;
-            GUI.Label(new Rect(brX + 16f, brY + 10f, 240f, 34f), $"{PlayerKart.SpeedKmh:F0} KM/H", speedStyle);
+            GUI.Label(new Rect(brX + 16f, brY + 10f, 232f, 34f), $"{PlayerKart.SpeedKmh:F0} KM/H", speedStyle);
 
             textStyle.normal.textColor = Color.white;
-            string boostLabel = PlayerKart.IsDrifting ? "BOOST (DRIFT CHARGING!)" : "BOOST NITRO [E]";
-            GUI.Label(new Rect(brX + 16f, brY + 48f, 240f, 20f), boostLabel, textStyle);
-            DrawProgressBar(new Rect(brX + 16f, brY + 72f, 240f, 18f), PlayerKart.BoostMeter / 100f, LegoPalette.BrightOrange);
+            string boostLabel = PlayerKart.IsDrifting ? "NITRO (DRIFT CHARGING!)" : "NITRO [E]";
+            GUI.Label(new Rect(brX + 16f, brY + 46f, 232f, 20f), boostLabel, textStyle);
+            DrawProgressBar(new Rect(brX + 16f, brY + 68f, 232f, 16f), PlayerKart.BoostMeter / 100f, LegoPalette.BrightOrange);
 
             if (PlayerKart.Visuals.IsStunned)
             {
@@ -685,6 +890,35 @@ namespace Lego2KDrive
             }
 
             DrawCenterBannerIfActive();
+
+            if (LegoMinimapRenderer.Instance != null)
+            {
+                LegoMinimapRenderer.Instance.DrawMinimapGUI(
+                    PlayerKart.transform.position,
+                    PlayerKart.transform.eulerAngles.y,
+                    GarageEntryPosition,
+                    RaceEntryPosition);
+            }
+        }
+
+        private void DrawCenterCrosshair()
+        {
+            if (_whiteTex == null) return;
+            float cx = Screen.width * 0.5f;
+            float cy = Screen.height * 0.5f;
+            float halfSpan = 7f;
+            float thickness = 2f;
+
+            // Crisp Minecraft-style dark-outlined white/cyan '+' crosshair centered on screen
+            Color outlineCol = new Color(0.04f, 0.06f, 0.09f, 0.90f);
+            Color armCol = new Color(0.96f, 0.99f, 1.0f, 0.96f);
+
+            DrawSolidBox(new Rect(cx - halfSpan - 1f, cy - 1.5f, halfSpan * 2f + 2f, thickness + 2f), outlineCol);
+            DrawSolidBox(new Rect(cx - 1.5f, cy - halfSpan - 1f, thickness + 2f, halfSpan * 2f + 2f), outlineCol);
+
+            DrawSolidBox(new Rect(cx - halfSpan, cy - 0.5f, halfSpan * 2f, thickness), armCol);
+            DrawSolidBox(new Rect(cx - 0.5f, cy - halfSpan, thickness, halfSpan * 2f), armCol);
+            DrawSolidBox(new Rect(cx - 1f, cy - 1f, 3f, 3f), LegoPalette.CyanGlow);
         }
 
         private void DrawCenterBannerIfActive()

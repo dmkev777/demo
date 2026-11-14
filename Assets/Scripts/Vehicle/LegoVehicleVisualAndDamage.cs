@@ -53,6 +53,7 @@ namespace Lego2KDrive
         private GameObject _shieldDomeVisual;
         private GameObject _stunHaloVisual;
         private GameObject[] _boostFlames = new GameObject[2];
+        private GameObject _driverCockpitVisual;
 
         public void Initialize(Color primaryColor, Color accentColor, bool isPlayer = true)
         {
@@ -84,14 +85,13 @@ namespace Lego2KDrive
             _formRoots.Clear();
             _formBricks.Clear();
 
+            // Single unified customizable car (boat & 3-form shapeshifting removed)
+            CurrentForm = TerrainType.Street;
             BuildFormHierarchy(TerrainType.Street);
-            BuildFormHierarchy(TerrainType.OffRoad);
-            BuildFormHierarchy(TerrainType.Water);
 
-            foreach (var kv in _formRoots)
+            if (_formRoots.TryGetValue(TerrainType.Street, out GameObject carRoot) && carRoot != null)
             {
-                if (kv.Value != null)
-                    kv.Value.SetActive(kv.Key == CurrentForm);
+                carRoot.SetActive(true);
             }
 
             ApplyDamageStateToCurrentForm();
@@ -105,16 +105,20 @@ namespace Lego2KDrive
 
             List<LiveBrickInstance> liveList = new List<LiveBrickInstance>();
             List<LegoBrickSpec> specs = Loadout.GetBricksForForm(form);
+            float wheelScale = LegoMeshAndMaterialFactory.GetWheelScaleForTier(Loadout.wheelSizeTier);
+            float referenceScaledRadius = 0.378f * wheelScale;
+            float stanceLift = Mathf.Max(0f, (referenceScaledRadius - 0.36f) * 0.85f);
 
             foreach (LegoBrickSpec spec in specs)
             {
                 if (spec.shape == BrickShape.Wheel)
                 {
                     // Build 2-node Wheel Hierarchy: SteerPivot -> SpinningTire + TechnicAlloyRim
-                    float wheelRadius = LegoMeshAndMaterialFactory.GetWheelRadius(spec.size.y, spec.size.z);
+                    float baseRadius = LegoMeshAndMaterialFactory.GetWheelRadius(spec.size.y, spec.size.z);
+                    float scaledRadius = baseRadius * wheelScale;
                     Vector3 axleLocalPos = new Vector3(
-                        spec.gridPos.x * LegoMeshAndMaterialFactory.STUD_UNIT,
-                        wheelRadius + spec.gridPos.y * LegoMeshAndMaterialFactory.PLATE_UNIT,
+                        spec.gridPos.x * LegoMeshAndMaterialFactory.STUD_UNIT * Mathf.Max(0.95f, wheelScale * 0.96f),
+                        scaledRadius,
                         spec.gridPos.z * LegoMeshAndMaterialFactory.STUD_UNIT
                     );
 
@@ -125,22 +129,20 @@ namespace Lego2KDrive
                     GameObject tireObj = new GameObject("TireAndRim");
                     tireObj.transform.SetParent(steerPivot.transform, false);
                     tireObj.transform.localPosition = Vector3.zero;
+                    tireObj.transform.localScale = Vector3.one * wheelScale;
 
                     MeshFilter tmf = tireObj.AddComponent<MeshFilter>();
                     tmf.sharedMesh = LegoMeshAndMaterialFactory.GetBrickMesh(spec.size.x, spec.size.y, spec.size.z, BrickShape.Wheel);
                     MeshRenderer tmr = tireObj.AddComponent<MeshRenderer>();
-                    // Rubber matte finish for tires
-                    tmr.sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(spec.color, false, 0.25f, 0.02f);
+                    tmr.sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(spec.color, false, 0.22f, 0.0f);
 
-                    // Add inner 6-spoke LEGO Technic Alloy Rim Hub
                     GameObject rimObj = new GameObject("TechnicAlloyRim");
                     rimObj.transform.SetParent(tireObj.transform, false);
                     rimObj.transform.localPosition = Vector3.zero;
                     MeshFilter rmf = rimObj.AddComponent<MeshFilter>();
                     rmf.sharedMesh = LegoMeshAndMaterialFactory.GetBrickMesh(spec.size.x, spec.size.y, spec.size.z, BrickShape.CylinderPart);
                     MeshRenderer rmr = rimObj.AddComponent<MeshRenderer>();
-                    Color rimColor = form == TerrainType.OffRoad ? LegoPalette.GoldChrome : LegoPalette.SilverMetallic;
-                    rmr.sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(rimColor, false, 0.90f, 0.55f);
+                    rmr.sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(LegoPalette.SilverMetallic, false, 0.68f, 0.45f);
 
                     liveList.Add(new LiveBrickInstance
                     {
@@ -158,9 +160,11 @@ namespace Lego2KDrive
                     GameObject bObj = new GameObject($"Brick_{spec.shape}_{spec.gridPos}");
                     bObj.transform.SetParent(formRoot.transform, false);
 
+                    float baseY = spec.gridPos.y * LegoMeshAndMaterialFactory.PLATE_UNIT;
+                    float adjustedY = Mathf.Max(0.18f, baseY + stanceLift);
                     Vector3 localPos = new Vector3(
                         spec.gridPos.x * LegoMeshAndMaterialFactory.STUD_UNIT,
-                        spec.gridPos.y * LegoMeshAndMaterialFactory.PLATE_UNIT,
+                        adjustedY,
                         spec.gridPos.z * LegoMeshAndMaterialFactory.STUD_UNIT
                     );
                     bObj.transform.localPosition = localPos;
@@ -169,8 +173,9 @@ namespace Lego2KDrive
                     mf.sharedMesh = LegoMeshAndMaterialFactory.GetBrickMesh(spec.size.x, spec.size.y, spec.size.z, spec.shape);
 
                     MeshRenderer mr = bObj.AddComponent<MeshRenderer>();
-                    float smoothness = (spec.shape == BrickShape.Windshield) ? 0.96f : 0.84f;
-                    mr.sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(spec.color, spec.isEmissive, smoothness);
+                    float smoothness = (spec.shape == BrickShape.Windshield) ? 0.82f : (spec.isCoreChassis ? 0.32f : 0.58f);
+                    float metallic = (spec.shape == BrickShape.V8Engine) ? 0.45f : 0.08f;
+                    mr.sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(spec.color, spec.isEmissive, smoothness, metallic);
 
                     liveList.Add(new LiveBrickInstance
                     {
@@ -185,7 +190,59 @@ namespace Lego2KDrive
                 }
             }
 
+            // Soft under-chassis contact shadow grounding the vehicle onto the workshop floor and track
+            GameObject shadowQuad = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            shadowQuad.name = "UnderbodyShadow";
+            Destroy(shadowQuad.GetComponent<Collider>());
+            shadowQuad.transform.SetParent(formRoot.transform, false);
+            shadowQuad.transform.localPosition = new Vector3(0f, 0.015f, 0f);
+            shadowQuad.transform.localScale = new Vector3(1.95f, 0.01f, 3.15f);
+            MeshRenderer shadowMr = shadowQuad.GetComponent<MeshRenderer>();
+            shadowMr.sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(new Color(0.05f, 0.06f, 0.08f), false, 0.08f, 0.0f);
+            shadowMr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            _driverCockpitVisual = BuildSeatedLowPolyDriver(formRoot.transform, Mathf.Max(0.56f, 0.68f + stanceLift));
             _formBricks[form] = liveList;
+        }
+
+        private GameObject BuildSeatedLowPolyDriver(Transform parent, float seatY)
+        {
+            GameObject driver = new GameObject("SeatedLowPolyDriver");
+            driver.transform.SetParent(parent, false);
+            driver.transform.localPosition = new Vector3(0f, seatY, -0.08f);
+
+            Color suitCol = Loadout != null ? Loadout.primaryColor : LegoPalette.BrightBlue;
+            Color skinCol = new Color(0.95f, 0.78f, 0.62f);
+
+            GameObject torso = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(torso.GetComponent<Collider>());
+            torso.transform.SetParent(driver.transform, false);
+            torso.transform.localPosition = new Vector3(0f, 0.28f, 0f);
+            torso.transform.localScale = new Vector3(0.46f, 0.42f, 0.28f);
+            torso.GetComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(suitCol, false, 0.22f);
+
+            GameObject head = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(head.GetComponent<Collider>());
+            head.transform.SetParent(driver.transform, false);
+            head.transform.localPosition = new Vector3(0f, 0.64f, 0.02f);
+            head.transform.localScale = new Vector3(0.32f, 0.30f, 0.32f);
+            head.GetComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(skinCol, false, 0.20f);
+
+            GameObject helmet = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(helmet.GetComponent<Collider>());
+            helmet.transform.SetParent(driver.transform, false);
+            helmet.transform.localPosition = new Vector3(0f, 0.76f, -0.01f);
+            helmet.transform.localScale = new Vector3(0.36f, 0.16f, 0.38f);
+            helmet.GetComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(LegoPalette.PureWhite, false, 0.28f);
+
+            GameObject visor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(visor.GetComponent<Collider>());
+            visor.transform.SetParent(driver.transform, false);
+            visor.transform.localPosition = new Vector3(0f, 0.67f, 0.16f);
+            visor.transform.localScale = new Vector3(0.28f, 0.12f, 0.06f);
+            visor.GetComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(LegoPalette.CarbonBlack, false, 0.65f);
+
+            return driver;
         }
 
         private void CreateVfxAttachments()
@@ -235,34 +292,24 @@ namespace Lego2KDrive
 
         public void SwitchToForm(TerrainType newForm, bool playTransformEffect = true)
         {
-            bool changedForm = (CurrentForm != newForm);
+            if (newForm == TerrainType.Water) newForm = TerrainType.OffRoad;
             CurrentForm = newForm;
 
-            foreach (var kv in _formRoots)
-            {
-                if (kv.Value != null)
-                    kv.Value.SetActive(kv.Key == newForm);
-            }
+            // Single customizable car always stays active on TerrainType.Street root
+            if (_formRoots.TryGetValue(TerrainType.Street, out GameObject carRoot) && carRoot != null)
+                carRoot.SetActive(true);
 
             ApplyDamageStateToCurrentForm();
-
-            if (changedForm && playTransformEffect)
-            {
-                _transformAnimTimer = 0.28f;
-                if (LegoProceduralAudio.Instance != null)
-                    LegoProceduralAudio.Instance.PlayTransformSnap();
-            }
         }
 
         private void ApplyDamageStateToCurrentForm()
         {
-            if (!_formBricks.TryGetValue(CurrentForm, out List<LiveBrickInstance> bricks))
+            if (!_formBricks.TryGetValue(TerrainType.Street, out List<LiveBrickInstance> bricks))
                 return;
 
             TotalDetachableBricks = bricks.Count;
             AttachedBricksCount = bricks.Count;
 
-            // Keep 100% of the vehicle's blocks intact and attached at all times
             foreach (var b in bricks)
             {
                 b.isDetached = false;
@@ -279,6 +326,8 @@ namespace Lego2KDrive
             _visualRoot.localScale = Vector3.one;
             _visualRoot.localPosition = new Vector3(0f, GROUND_CONTACT_OFFSET_Y, 0f);
             _visualRoot.localRotation = Quaternion.identity;
+            if (_driverCockpitVisual != null && _driverCockpitVisual.activeSelf)
+                _driverCockpitVisual.SetActive(false);
             if (_stunHaloVisual != null)
                 _stunHaloVisual.SetActive(false);
         }
@@ -291,6 +340,11 @@ namespace Lego2KDrive
             {
                 ResetPoseForGarage();
                 return;
+            }
+
+            if (_driverCockpitVisual != null && !_driverCockpitVisual.activeSelf)
+            {
+                _driverCockpitVisual.SetActive(true);
             }
 
             // 0. Update 5-second Stun timer when HP reaches 0
@@ -339,11 +393,6 @@ namespace Lego2KDrive
             {
                 targetRoll += Mathf.Sin(Time.time * 45f) * 7.0f;
             }
-            else if (CurrentForm == TerrainType.Water)
-            {
-                wavePitch = Mathf.Sin(Time.time * 5.2f) * 3.0f - Mathf.Clamp(forwardSpeed * 0.16f, 0f, 5.5f);
-                yOffset = GROUND_CONTACT_OFFSET_Y + 0.06f + Mathf.Sin(Time.time * 4.5f) * 0.06f;
-            }
             else if (CurrentForm == TerrainType.OffRoad)
             {
                 if (Mathf.Abs(forwardSpeed) > 2f)
@@ -356,7 +405,7 @@ namespace Lego2KDrive
 
             // 3. True Centered Axle Wheel Rotation (Steering on Pivot Y, Rolling on Tire X)
             _wheelSpinAngle += forwardSpeed * 42f * Time.deltaTime;
-            if (_formBricks.TryGetValue(CurrentForm, out List<LiveBrickInstance> bricks))
+            if (_formBricks.TryGetValue(TerrainType.Street, out List<LiveBrickInstance> bricks))
             {
                 foreach (var b in bricks)
                 {
@@ -372,11 +421,11 @@ namespace Lego2KDrive
                 }
             }
 
-            // 4. Spawn LEGO Trail VFX Puffs (Drift Tire Smoke / Off-Road Dust / Boat Water Wake)
+            // 4. Spawn LEGO Trail VFX Puffs (Drift Tire Smoke / Off-Road Dust)
             if (!IsStunned && Mathf.Abs(forwardSpeed) > 12f)
             {
                 _vfxTrailTimer += Time.deltaTime;
-                float interval = (Mathf.Abs(driftTilt) > 0.1f || isBoosting || CurrentForm == TerrainType.Water) ? 0.07f : 0.18f;
+                float interval = (Mathf.Abs(driftTilt) > 0.1f || isBoosting) ? 0.07f : 0.18f;
                 if (_vfxTrailTimer >= interval)
                 {
                     _vfxTrailTimer = 0f;

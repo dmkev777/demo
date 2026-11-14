@@ -28,6 +28,9 @@ namespace Lego2KDrive
 
         private float _walkCycleTime;
         private bool _jumpQueued;
+        private Vector3 _groundNormal = Vector3.up;
+        private bool _lowPolyStyled;
+        private static Mesh _facetedOctaPrismMesh;
 
         private void Awake()
         {
@@ -71,12 +74,16 @@ namespace Lego2KDrive
             root.transform.SetParent(transform, false);
             _visualRoot = root.transform;
 
-            // 1. Torso (Minecraft-style blocky shirt)
+            // 1. Torso (Faceted Low-Poly Explorer Jacket)
             GameObject torso = CreateBlockPart("Torso", _visualRoot, new Vector3(0f, 0.72f, 0f),
-                new Vector3Int(2, 3, 1), LegoPalette.CyanGlow);
+                new Vector3Int(2, 3, 1), LegoPalette.WorkshopTeal);
             torso.transform.localScale = new Vector3(1.1f, 1.0f, 1.1f);
+            CreateBlockPart("JacketCollar", torso.transform, new Vector3(0f, 0.80f, 0.02f),
+                new Vector3Int(2, 1, 1), LegoPalette.BrightOrange);
+            CreateBlockPart("Backpack", torso.transform, new Vector3(0f, 0.14f, -0.34f),
+                new Vector3Int(2, 2, 1), LegoPalette.WorkshopWood);
 
-            // 2. Head Pivot & Face with Eyes + Hair
+            // 2. Head Pivot & Face with Eyes + Explorer Cap
             GameObject headPivotObj = new GameObject("HeadPivot");
             headPivotObj.transform.SetParent(_visualRoot, false);
             headPivotObj.transform.localPosition = new Vector3(0f, 1.56f, 0f);
@@ -84,15 +91,18 @@ namespace Lego2KDrive
 
             CreateBlockPart("HeadBox", _headPivot, Vector3.zero,
                 new Vector3Int(2, 3, 2), new Color(0.96f, 0.78f, 0.58f));
-            CreateBlockPart("HairCap", _headPivot, new Vector3(0f, 0.75f, 0f),
-                new Vector3Int(2, 1, 2), new Color(0.22f, 0.14f, 0.08f));
+            CreateBlockPart("HairCap", _headPivot, new Vector3(0f, 0.74f, 0f),
+                new Vector3Int(2, 1, 2), LegoPalette.BrightBlue);
+            GameObject visor = CreateBlockPart("CapVisor", _headPivot, new Vector3(0f, 0.72f, 0.48f),
+                new Vector3Int(2, 1, 1), LegoPalette.BrightOrange);
+            visor.transform.localScale = new Vector3(0.95f, 0.42f, 0.85f);
 
-            // Blocky Eyes
-            GameObject eyeL = CreateBlockPart("EyeL", _headPivot, new Vector3(-0.18f, 0.34f, 0.41f),
+            // Low-Poly Eyes
+            GameObject eyeL = CreateBlockPart("EyeL", _headPivot, new Vector3(-0.18f, 0.34f, 0.39f),
                 new Vector3Int(1, 1, 1), LegoPalette.CarbonBlack);
             eyeL.transform.localScale = new Vector3(0.32f, 0.38f, 0.15f);
 
-            GameObject eyeR = CreateBlockPart("EyeR", _headPivot, new Vector3(0.18f, 0.34f, 0.41f),
+            GameObject eyeR = CreateBlockPart("EyeR", _headPivot, new Vector3(0.18f, 0.34f, 0.39f),
                 new Vector3Int(1, 1, 1), LegoPalette.CarbonBlack);
             eyeR.transform.localScale = new Vector3(0.32f, 0.38f, 0.15f);
 
@@ -104,9 +114,9 @@ namespace Lego2KDrive
 
             // 4. Left & Right Walking Legs
             _leftLegPivot = CreateLimb("LeftLeg", new Vector3(-0.22f, 0.72f, 0f),
-                new Vector3(0f, -0.72f, 0f), new Vector3Int(1, 3, 1), LegoPalette.BrightBlue);
+                new Vector3(0f, -0.72f, 0f), new Vector3Int(1, 3, 1), LegoPalette.LowPolyMountainSlate);
             _rightLegPivot = CreateLimb("RightLeg", new Vector3(0.22f, 0.72f, 0f),
-                new Vector3(0f, -0.72f, 0f), new Vector3Int(1, 3, 1), LegoPalette.BrightBlue);
+                new Vector3(0f, -0.72f, 0f), new Vector3Int(1, 3, 1), LegoPalette.LowPolyMountainSlate);
         }
 
         private Transform CreateLimb(string name, Vector3 pivotLocalPos, Vector3 meshOffset, Vector3Int brickSize, Color color)
@@ -121,13 +131,20 @@ namespace Lego2KDrive
 
         private static GameObject CreateBlockPart(string name, Transform parent, Vector3 localPos, Vector3Int size, Color col)
         {
+            if (_facetedOctaPrismMesh == null)
+                _facetedOctaPrismMesh = BuildUnitOctagonalLowPolyMesh();
+
             GameObject obj = new GameObject(name);
             obj.transform.SetParent(parent, false);
             obj.transform.localPosition = localPos;
-            MeshFilter mf = obj.AddComponent<MeshFilter>();
-            mf.sharedMesh = LegoMeshAndMaterialFactory.GetBrickMesh(size.x, size.y, size.z, BrickShape.FlatTile);
-            MeshRenderer mr = obj.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(col, false, 0.45f);
+
+            Vector3 dims = new Vector3(size.x * 0.38f, size.y * 0.28f, size.z * 0.38f);
+            GameObject meshChild = new GameObject("LowPolyFacet");
+            meshChild.transform.SetParent(obj.transform, false);
+            meshChild.transform.localPosition = new Vector3(0f, dims.y * 0.5f, 0f);
+            meshChild.transform.localScale = dims;
+            meshChild.AddComponent<MeshFilter>().sharedMesh = _facetedOctaPrismMesh;
+            meshChild.AddComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(col, false, 0.16f);
             return obj;
         }
 
@@ -150,7 +167,7 @@ namespace Lego2KDrive
 
         private void Update()
         {
-            if (!LegoGameInput.GameplayAllowed)
+            if (!LegoGameInput.CharacterControlAllowed)
             {
                 _jumpQueued = false;
                 return;
@@ -167,8 +184,8 @@ namespace Lego2KDrive
                 _jumpQueued = true;
             }
 
-            // Relative mouse movement keeps turning even at the edge of the display.
-            if (Cursor.lockState == CursorLockMode.Locked)
+            // Relative mouse movement keeps turning even when cursor is newly locked.
+            if (LegoGameInput.CharacterControlAllowed)
             {
                 float mx = Input.GetAxisRaw("Mouse X");
                 float my = Input.GetAxisRaw("Mouse Y");
@@ -184,7 +201,7 @@ namespace Lego2KDrive
 
         private void FixedUpdate()
         {
-            if (!LegoGameInput.GameplayAllowed)
+            if (!LegoGameInput.CharacterControlAllowed)
             {
                 _jumpQueued = false;
                 Vector3 velocity = LegoMeshAndMaterialFactory.GetVelocity(_rb);
@@ -233,13 +250,88 @@ namespace Lego2KDrive
             }
             _jumpQueued = false;
 
+            EnsureLowPolyCharacterStyle();
+
             if (!IsGrounded)
             {
+                _groundNormal = Vector3.up;
                 vy -= gravityExtra * Time.fixedDeltaTime;
             }
 
             Vector3 finalVel = new Vector3(moveDir.x * moveSpd, vy, moveDir.z * moveSpd);
+            if (IsGrounded && vy <= 0.1f && moveDir.sqrMagnitude > 0.001f)
+            {
+                Vector3 planarVel = new Vector3(moveDir.x * moveSpd, 0f, moveDir.z * moveSpd);
+                Vector3 projected = Vector3.ProjectOnPlane(planarVel, _groundNormal);
+                if (projected.sqrMagnitude > 0.0001f)
+                {
+                    projected = projected.normalized * planarVel.magnitude;
+                }
+                finalVel = projected + Vector3.down * 0.35f;
+            }
             LegoMeshAndMaterialFactory.SetVelocity(_rb, finalVel);
+        }
+
+        private void EnsureLowPolyCharacterStyle()
+        {
+            if (_lowPolyStyled || _visualRoot == null) return;
+            _lowPolyStyled = true;
+
+            if (_facetedOctaPrismMesh == null)
+                _facetedOctaPrismMesh = BuildUnitOctagonalLowPolyMesh();
+
+            foreach (MeshRenderer mr in _visualRoot.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                Color c = mr.sharedMaterial != null ? mr.sharedMaterial.color : LegoPalette.BrightBlue;
+                mr.sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(c, false, 0.16f);
+            }
+        }
+
+        private static Mesh BuildUnitOctagonalLowPolyMesh()
+        {
+            const int sides = 8;
+            // 8 top tris + 8 bottom tris + 8 side quads (16 tris) = 32 tris = 96 flat-shaded verts
+            Vector3[] verts = new Vector3[96];
+            int[] tris = new int[96];
+            int vi = 0;
+
+            Vector3 topC = new Vector3(0f, 0.5f, 0f);
+            Vector3 botC = new Vector3(0f, -0.5f, 0f);
+
+            for (int i = 0; i < sides; i++)
+            {
+                float a0 = ((i + 0.5f) / sides) * Mathf.PI * 2f;
+                float a1 = ((i + 1.5f) / sides) * Mathf.PI * 2f;
+                float rTop = 0.52f;
+                float rBot = 0.54f;
+
+                Vector3 t0 = new Vector3(Mathf.Cos(a0) * rTop, 0.46f, Mathf.Sin(a0) * rTop);
+                Vector3 t1 = new Vector3(Mathf.Cos(a1) * rTop, 0.46f, Mathf.Sin(a1) * rTop);
+                Vector3 b0 = new Vector3(Mathf.Cos(a0) * rBot, -0.48f, Mathf.Sin(a0) * rBot);
+                Vector3 b1 = new Vector3(Mathf.Cos(a1) * rBot, -0.48f, Mathf.Sin(a1) * rBot);
+
+                // Side quad (two tris, outward winding for CW/CCW check)
+                verts[vi] = b0; verts[vi + 1] = t0; verts[vi + 2] = t1;
+                tris[vi] = vi; tris[vi + 1] = vi + 1; tris[vi + 2] = vi + 2; vi += 3;
+
+                verts[vi] = b0; verts[vi + 1] = t1; verts[vi + 2] = b1;
+                tris[vi] = vi; tris[vi + 1] = vi + 1; tris[vi + 2] = vi + 2; vi += 3;
+
+                // Top cap
+                verts[vi] = topC; verts[vi + 1] = t1; verts[vi + 2] = t0;
+                tris[vi] = vi; tris[vi + 1] = vi + 1; tris[vi + 2] = vi + 2; vi += 3;
+
+                // Bottom cap
+                verts[vi] = botC; verts[vi + 1] = b0; verts[vi + 2] = b1;
+                tris[vi] = vi; tris[vi + 1] = vi + 1; tris[vi + 2] = vi + 2; vi += 3;
+            }
+
+            Mesh m = new Mesh { name = "LowPolyCharacterLimb" };
+            m.vertices = verts;
+            m.triangles = tris;
+            m.RecalculateNormals();
+            m.RecalculateBounds();
+            return m;
         }
 
         private void CheckGroundAndWater()
@@ -266,6 +358,7 @@ namespace Lego2KDrive
             if (foundGround)
             {
                 IsGrounded = true;
+                _groundNormal = bestHit.normal.y > 0.45f ? bestHit.normal : Vector3.up;
                 TerrainSurfaceTag tag = bestHit.collider.GetComponent<TerrainSurfaceTag>();
                 IsInWater = (tag != null && tag.terrainType == TerrainType.Water);
             }

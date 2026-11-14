@@ -31,11 +31,25 @@ namespace Lego2KDrive
     }
 
     [Serializable]
+    public struct VehicleAeroStats
+    {
+        public int speedRating;       // 1..6 (Image 1 6-bar meter)
+        public int weightRating;      // 1..6
+        public int aeroRating;        // 1..6
+        public float topSpeedMultiplier;
+        public float accelMultiplier;
+        public float gripMultiplier;
+        public float offRoadMultiplier;
+        public int brickCount;
+    }
+
+    [Serializable]
     public class SerializedLoadoutData
     {
         public List<LegoBrickSpec> street = new List<LegoBrickSpec>();
         public List<LegoBrickSpec> offRoad = new List<LegoBrickSpec>();
         public List<LegoBrickSpec> water = new List<LegoBrickSpec>();
+        public int wheelSizeTier = (int)WheelSizeTier.Medium;
     }
 
     /// <summary>
@@ -45,11 +59,12 @@ namespace Lego2KDrive
     /// </summary>
     public class LegoVehicleLoadout
     {
-        private const string SAVE_KEY = "Lego2KDrive_PlayerCustomLoadout_v3";
+        private const string SAVE_KEY = "Lego2KDrive_PlayerCustomLoadout_v6";
 
         public Color primaryColor;
         public Color accentColor;
         public bool useMinimalBaseByDefault;
+        public WheelSizeTier wheelSizeTier = WheelSizeTier.Medium;
 
         public List<LegoBrickSpec> streetBricks = new List<LegoBrickSpec>();
         public List<LegoBrickSpec> offRoadBricks = new List<LegoBrickSpec>();
@@ -74,14 +89,90 @@ namespace Lego2KDrive
             }
         }
 
+        // Single unified customizable car (boat & 3-form shapeshifting removed)
         public List<LegoBrickSpec> GetBricksForForm(TerrainType form)
         {
-            switch (form)
+            return streetBricks;
+        }
+
+        public VehicleAeroStats CalculateVehicleStats()
+        {
+            List<LegoBrickSpec> bricks = streetBricks;
+            float mass = 12f;
+            float power = 0f;
+            float aero = 1.5f;
+            int count = bricks != null ? bricks.Count : 0;
+
+            if (bricks != null)
             {
-                case TerrainType.OffRoad: return offRoadBricks;
-                case TerrainType.Water: return waterBricks;
-                default: return streetBricks;
+                foreach (LegoBrickSpec b in bricks)
+                {
+                    if (b == null) continue;
+                    float vol = Mathf.Max(1, b.size.x * b.size.y * b.size.z);
+                    switch (b.shape)
+                    {
+                        case BrickShape.Wheel:
+                            mass += 1.2f;
+                            break;
+                        case BrickShape.V8Engine:
+                            power += 4.2f;
+                            mass += 3.0f;
+                            break;
+                        case BrickShape.JetNozzle:
+                            power += 3.5f;
+                            aero += 0.8f;
+                            mass += 1.5f;
+                            break;
+                        case BrickShape.SpoilerWing:
+                            aero += 3.2f;
+                            mass += 1.0f;
+                            break;
+                        case BrickShape.FrontSplitter:
+                        case BrickShape.SideSkirt:
+                        case BrickShape.RoofScoop:
+                            aero += 2.0f;
+                            mass += 0.9f;
+                            break;
+                        case BrickShape.SlopeFront:
+                        case BrickShape.SlopeInverted:
+                        case BrickShape.Windshield:
+                        case BrickShape.FenderArch:
+                            aero += 1.1f;
+                            mass += vol * 0.25f;
+                            break;
+                        case BrickShape.SportSeat:
+                            aero += 0.5f;
+                            mass += 0.8f;
+                            break;
+                        default:
+                            mass += vol * 0.38f;
+                            if (b.gridPos.y >= 5) aero -= 0.25f;
+                            break;
+                    }
+                }
             }
+
+            float wheelSpeedAdj = wheelSizeTier == WheelSizeTier.Large ? -0.02f : (wheelSizeTier == WheelSizeTier.Small ? 0.04f : 0f);
+            float wheelAccelAdj = wheelSizeTier == WheelSizeTier.Large ? -0.06f : (wheelSizeTier == WheelSizeTier.Small ? 0.10f : 0f);
+            float wheelGripAdj  = wheelSizeTier == WheelSizeTier.Large ? 0.12f  : (wheelSizeTier == WheelSizeTier.Small ? -0.05f : 0f);
+            float wheelOffRoad  = wheelSizeTier == WheelSizeTier.Large ? 1.28f  : (wheelSizeTier == WheelSizeTier.Small ? 0.84f : 1.00f);
+
+            float powerRatio = Mathf.Clamp((power * 1.4f + aero * 0.6f) / Mathf.Max(14f, mass * 0.45f), 0.35f, 1.45f);
+            float aeroNorm = Mathf.Clamp(aero / 10f, 0.15f, 1.0f);
+            float weightNorm = Mathf.Clamp((mass - 12f) / 36f, 0.10f, 1.0f);
+
+            VehicleAeroStats stats = new VehicleAeroStats
+            {
+                brickCount = count,
+                speedRating = Mathf.Clamp(Mathf.RoundToInt(2 + powerRatio * 2.6f + aeroNorm * 1.1f), 1, 6),
+                weightRating = Mathf.Clamp(Mathf.RoundToInt(1 + weightNorm * 5f + (wheelSizeTier == WheelSizeTier.Large ? 1f : 0f)), 1, 6),
+                aeroRating = Mathf.Clamp(Mathf.RoundToInt(1 + aeroNorm * 5f), 1, 6),
+                topSpeedMultiplier = Mathf.Clamp(0.92f + powerRatio * 0.14f + aeroNorm * 0.10f + wheelSpeedAdj, 0.84f, 1.24f),
+                accelMultiplier = Mathf.Clamp(1.06f + power * 0.03f - weightNorm * 0.22f + wheelAccelAdj, 0.80f, 1.28f),
+                gripMultiplier = Mathf.Clamp(0.90f + aeroNorm * 0.20f + wheelGripAdj, 0.82f, 1.28f),
+                offRoadMultiplier = wheelOffRoad
+            };
+            return stats;
         }
 
         public string ExportToJson()
@@ -89,8 +180,9 @@ namespace Lego2KDrive
             SerializedLoadoutData data = new SerializedLoadoutData
             {
                 street = streetBricks,
-                offRoad = offRoadBricks,
-                water = waterBricks
+                offRoad = streetBricks,
+                water = streetBricks,
+                wheelSizeTier = (int)wheelSizeTier
             };
             return JsonUtility.ToJson(data);
         }
@@ -104,8 +196,9 @@ namespace Lego2KDrive
                 if (data != null && data.street != null && data.street.Count > 0)
                 {
                     streetBricks = data.street;
-                    offRoadBricks = (data.offRoad != null && data.offRoad.Count > 0) ? data.offRoad : streetBricks;
-                    waterBricks = (data.water != null && data.water.Count > 0) ? data.water : streetBricks;
+                    offRoadBricks = streetBricks;
+                    waterBricks = streetBricks;
+                    wheelSizeTier = (WheelSizeTier)Mathf.Clamp(data.wheelSizeTier, 0, 2);
                     return true;
                 }
             }
@@ -139,49 +232,28 @@ namespace Lego2KDrive
         public void ResetAllToSmallBareBase()
         {
             streetBricks = CreateMinimalStreetBase(primaryColor, accentColor);
-            offRoadBricks = CreateMinimalOffRoadBase(primaryColor, accentColor);
-            waterBricks = CreateMinimalWaterBase(primaryColor, accentColor);
+            offRoadBricks = streetBricks;
+            waterBricks = streetBricks;
             SaveToPrefs();
         }
 
         public void ResetFormToSmallBareBase(TerrainType form)
         {
-            switch (form)
-            {
-                case TerrainType.Street:
-                    streetBricks = CreateMinimalStreetBase(primaryColor, accentColor);
-                    break;
-                case TerrainType.OffRoad:
-                    offRoadBricks = CreateMinimalOffRoadBase(primaryColor, accentColor);
-                    break;
-                case TerrainType.Water:
-                    waterBricks = CreateMinimalWaterBase(primaryColor, accentColor);
-                    break;
-            }
-            SaveToPrefs();
+            ResetAllToSmallBareBase();
         }
 
         public void ResetAllToFullTemplates()
         {
             streetBricks = CreateCompactRivalStreetBlueprint(primaryColor, accentColor);
-            offRoadBricks = CreateCompactRivalOffRoadBlueprint(primaryColor, accentColor);
-            waterBricks = CreateCompactRivalBoatBlueprint(primaryColor, accentColor);
+            offRoadBricks = streetBricks;
+            waterBricks = streetBricks;
         }
 
         public void LoadFullTemplateForForm(TerrainType form)
         {
-            switch (form)
-            {
-                case TerrainType.Street:
-                    streetBricks = CreateCompactRivalStreetBlueprint(primaryColor, accentColor);
-                    break;
-                case TerrainType.OffRoad:
-                    offRoadBricks = CreateCompactRivalOffRoadBlueprint(primaryColor, accentColor);
-                    break;
-                case TerrainType.Water:
-                    waterBricks = CreateCompactRivalBoatBlueprint(primaryColor, accentColor);
-                    break;
-            }
+            streetBricks = CreateCompactRivalStreetBlueprint(primaryColor, accentColor);
+            offRoadBricks = streetBricks;
+            waterBricks = streetBricks;
             SaveToPrefs();
         }
 
@@ -190,26 +262,36 @@ namespace Lego2KDrive
         // =====================================================================
 
         /// <summary>
-        /// Small Street Chassis Base: Thick 2-layer Carbon & Silver Technic Kart Frame + 4 wide wheels + solid bumpers.
+        /// Small Street Chassis Base: Thick 2-layer Carbon & Silver Technic Kart Frame + 4 wide wheels + starter decorative blocks.
         /// </summary>
         public static List<LegoBrickSpec> CreateMinimalStreetBase(Color primary, Color accent)
         {
             List<LegoBrickSpec> b = new List<LegoBrickSpec>();
 
-            // Lower Heavy Axle Frame & Upper Studded Chassis Tub (Thick 2-layer base!)
+            // Lower Heavy Axle Frame & Studded Chassis Tub (Core chassis)
             b.Add(new LegoBrickSpec(new Vector3Int(0, 1, 0), new Vector3Int(4, 2, 6), LegoPalette.CarbonBlack, BrickShape.StandardBrick, true));
             b.Add(new LegoBrickSpec(new Vector3Int(0, 1, 3), new Vector3Int(4, 2, 1), LegoPalette.SilverMetallic, BrickShape.StandardBrick, true));
             b.Add(new LegoBrickSpec(new Vector3Int(0, 1, -3), new Vector3Int(4, 2, 1), LegoPalette.SilverMetallic, BrickShape.StandardBrick, true));
 
-            // 4 Wide, Chunky Kart Wheels flush with ground
+            // 4 Wide, Chunky Wheels flush with ground
             b.Add(new LegoBrickSpec(new Vector3Int(-3, 0, 2), new Vector3Int(2, 3, 3), LegoPalette.TireBlack, BrickShape.Wheel, true));
             b.Add(new LegoBrickSpec(new Vector3Int(3, 0, 2), new Vector3Int(2, 3, 3), LegoPalette.TireBlack, BrickShape.Wheel, true));
             b.Add(new LegoBrickSpec(new Vector3Int(-3, 0, -2), new Vector3Int(2, 3, 3), LegoPalette.TireBlack, BrickShape.Wheel, true));
             b.Add(new LegoBrickSpec(new Vector3Int(3, 0, -2), new Vector3Int(2, 3, 3), LegoPalette.TireBlack, BrickShape.Wheel, true));
 
-            // Chunky Starter Nose Block & Rear Engine Block (Detachable starter pieces)
-            b.Add(new LegoBrickSpec(new Vector3Int(0, 3, 2), new Vector3Int(2, 2, 2), primary, BrickShape.SlopeFront, false));
-            b.Add(new LegoBrickSpec(new Vector3Int(0, 3, -2), new Vector3Int(2, 2, 2), accent, BrickShape.StandardBrick, false));
+            // Image 1-Style Sleek Orange Sports Car Silhouette (Detachable & customizable parts)
+            b.Add(new LegoBrickSpec(new Vector3Int(0, 2, 3), new Vector3Int(4, 1, 2), LegoPalette.DarkGrey, BrickShape.FrontSplitter, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(0, 3, 2), new Vector3Int(4, 2, 2), primary, BrickShape.SlopeFront, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(-2, 2, 2), new Vector3Int(2, 2, 3), primary, BrickShape.FenderArch, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(2, 2, 2), new Vector3Int(2, 2, 3), primary, BrickShape.FenderArch, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(-2, 2, -2), new Vector3Int(2, 2, 3), primary, BrickShape.FenderArch, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(2, 2, -2), new Vector3Int(2, 2, 3), primary, BrickShape.FenderArch, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(-2, 2, 0), new Vector3Int(1, 2, 3), LegoPalette.DarkGrey, BrickShape.SideSkirt, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(2, 2, 0), new Vector3Int(1, 2, 3), LegoPalette.DarkGrey, BrickShape.SideSkirt, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(0, 3, 0), new Vector3Int(2, 2, 2), LegoPalette.WorkshopWood, BrickShape.SportSeat, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(0, 4, 1), new Vector3Int(3, 2, 2), LegoPalette.CyanGlow, BrickShape.Windshield, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(0, 3, -2), new Vector3Int(2, 2, 2), accent, BrickShape.V8Engine, false));
+            b.Add(new LegoBrickSpec(new Vector3Int(0, 5, -3), new Vector3Int(4, 2, 2), primary, BrickShape.SpoilerWing, false));
 
             return b;
         }

@@ -136,7 +136,7 @@ namespace Lego2KDrive
             obj.transform.SetParent(parent, false);
             obj.transform.localPosition = localPos;
             obj.AddComponent<MeshFilter>().sharedMesh = LegoMeshAndMaterialFactory.GetBrickMesh(size.x, size.y, size.z, BrickShape.FlatTile);
-            obj.AddComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetPlasticMaterial(col, false, 0.45f);
+            obj.AddComponent<MeshRenderer>().sharedMaterial = LegoMeshAndMaterialFactory.GetLowPolyMaterial(col, false, 0.22f);
             return obj;
         }
 
@@ -516,28 +516,12 @@ namespace Lego2KDrive
 
         public void BroadcastVoxelBlockPlaced(Vector3 worldPos, float yaw, int catalogIndex)
         {
-            if (!IsConnected) return;
-            SendPacket(new MultiplayerPacket
-            {
-                type = "voxel_place",
-                room = RoomCode,
-                playerId = MyPlayerId,
-                pos = worldPos,
-                yaw = yaw,
-                blockIndex = catalogIndex
-            });
+            // World block building disabled in Low-Poly Motorverse overhaul.
         }
 
         public void BroadcastVoxelBlockBroken(Vector3 worldPos)
         {
-            if (!IsConnected) return;
-            SendPacket(new MultiplayerPacket
-            {
-                type = "voxel_break",
-                room = RoomCode,
-                playerId = MyPlayerId,
-                pos = worldPos
-            });
+            // World block building disabled in Low-Poly Motorverse overhaul.
         }
 
         private void Update()
@@ -721,17 +705,9 @@ namespace Lego2KDrive
                 return;
             }
 
-            if (pkt.type == "voxel_place")
+            if (pkt.type == "voxel_place" || pkt.type == "voxel_break")
             {
-                if (MinecraftWorldBuilderAndInventory.Instance != null)
-                    MinecraftWorldBuilderAndInventory.Instance.SpawnNetworkVoxelBlock(pkt.pos, pkt.yaw, pkt.blockIndex);
-                return;
-            }
-
-            if (pkt.type == "voxel_break")
-            {
-                if (MinecraftWorldBuilderAndInventory.Instance != null)
-                    MinecraftWorldBuilderAndInventory.Instance.BreakNetworkVoxelBlockAt(pkt.pos);
+                // World voxel placement/breaking is disabled; ignore legacy packets cleanly.
                 return;
             }
 

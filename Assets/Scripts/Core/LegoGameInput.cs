@@ -9,16 +9,25 @@ namespace Lego2KDrive
         public static LegoGameInput Instance { get; private set; }
         public bool IsPauseMenuOpen { get; private set; }
         private int _blockedThroughFrame;
-        private bool _hadPointerLock;
 
         public static bool HasModal => Instance != null && Instance.IsPauseMenuOpen ||
             LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen ||
-            MinecraftWorldBuilderAndInventory.Instance != null && MinecraftWorldBuilderAndInventory.Instance.IsInventoryOpen ||
             LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsRoomPanelOpen ||
             LegoRaceLobby.Instance != null && LegoRaceLobby.Instance.IsPanelOpen;
 
+        public static bool IsGarageAimingActive =>
+            LegoGarageBuilder.Instance != null &&
+            LegoGarageBuilder.Instance.IsGarageOpen &&
+            !(Instance != null && Instance.IsPauseMenuOpen) &&
+            !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt);
+
         public static bool GameplayAllowed => Instance != null && !HasModal &&
-            Cursor.lockState == CursorLockMode.Locked && Time.frameCount > Instance._blockedThroughFrame;
+            Time.frameCount > Instance._blockedThroughFrame;
+
+        public static bool CharacterControlAllowed =>
+            Instance != null &&
+            Time.frameCount > Instance._blockedThroughFrame &&
+            (!HasModal || (IsGarageAimingActive && LegoGarageBuilder.Instance != null && !LegoGarageBuilder.Instance.IsCarInspectView));
 
         private void Awake() { Instance = this; }
         private void Start() { RefreshState(); }
@@ -34,25 +43,44 @@ namespace Lego2KDrive
                 return;
             }
 
-            if (!IsPauseMenuOpen)
+            if (Input.GetKeyDown(KeyCode.Tab))
             {
-                if (Input.GetKeyDown(KeyCode.Tab)) ToggleGarage();
-                else if (Input.GetKeyDown(KeyCode.P)) ToggleRoom();
-                else if (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.I)) ToggleInventory();
+                var garage = LegoGarageBuilder.Instance;
+                bool canOpenFromPause = garage != null && (garage.IsGarageOpen || garage.IsInTestDrive ||
+                    (LegoRaceManagerAndHUD.Instance != null && LegoRaceManagerAndHUD.Instance.CanOpenGarageNow));
+                if (!IsPauseMenuOpen || canOpenFromPause)
+                {
+                    ToggleGarage();
+                }
+            }
+            else if (!IsPauseMenuOpen && Input.GetKeyDown(KeyCode.P))
+            {
+                ToggleRoom();
             }
 
-            // Browser / Editor may release pointer lock themselves (Escape, tab switch).
-            if (!HasModal && Cursor.lockState != CursorLockMode.Locked &&
-                (_hadPointerLock || Time.frameCount > _blockedThroughFrame + 2))
-                OpenPauseMenu();
-            _hadPointerLock = Cursor.lockState == CursorLockMode.Locked;
+            // Keep OS cursor hidden & locked during active gameplay and while aiming in Garage (Alt temporarily releases it for UI clicks).
+            bool lockCursor = !HasModal || IsGarageAimingActive;
+            if (lockCursor)
+            {
+                if (Cursor.lockState != CursorLockMode.Locked)
+                    Cursor.lockState = CursorLockMode.Locked;
+                if (Cursor.visible)
+                    Cursor.visible = false;
+            }
+            else
+            {
+                if (Cursor.lockState != CursorLockMode.None)
+                    Cursor.lockState = CursorLockMode.None;
+                if (!Cursor.visible)
+                    Cursor.visible = true;
+            }
             RefreshTimeScale();
         }
 
         public void ClosePanels()
         {
             if (LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen)
-                LegoGarageBuilder.Instance.ToggleGarage();
+                LegoGarageBuilder.Instance.CloseGarageToOnFoot();
             if (MinecraftWorldBuilderAndInventory.Instance != null)
                 MinecraftWorldBuilderAndInventory.Instance.CloseInventory();
             if (LegoMultiplayerRoomManager.Instance != null)
@@ -77,9 +105,34 @@ namespace Lego2KDrive
 
         public void ToggleGarage()
         {
-            bool wasOpen = LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen;
+            var garage = LegoGarageBuilder.Instance;
+            if (garage == null) return;
+
+            if (garage.IsInTestDrive)
+            {
+                ClosePanels();
+                garage.ExitTestDriveToGarage();
+                RefreshState();
+                return;
+            }
+
+            bool wasOpen = garage.IsGarageOpen;
+            if (wasOpen)
+            {
+                ClosePanels();
+                RefreshState();
+                return;
+            }
+
+            bool canOpen = LegoRaceManagerAndHUD.Instance == null || LegoRaceManagerAndHUD.Instance.CanOpenGarageNow;
+            if (!canOpen)
+            {
+                garage.NotifyMustVisitGarageZone();
+                return;
+            }
+
             ClosePanels();
-            if (!wasOpen && LegoGarageBuilder.Instance != null) LegoGarageBuilder.Instance.ToggleGarage();
+            garage.ToggleGarage();
             RefreshState();
         }
 
@@ -93,33 +146,31 @@ namespace Lego2KDrive
 
         public void ToggleInventory()
         {
-            var manager = LegoRaceManagerAndHUD.Instance;
-            if (manager == null || !manager.IsPlayerOnFoot) return;
-            bool wasOpen = MinecraftWorldBuilderAndInventory.Instance != null && MinecraftWorldBuilderAndInventory.Instance.IsInventoryOpen;
-            ClosePanels();
-            if (!wasOpen && MinecraftWorldBuilderAndInventory.Instance != null) MinecraftWorldBuilderAndInventory.Instance.ToggleInventory();
-            RefreshState();
+            // World inventory removed in favor of in-Garage car customization.
         }
 
         public void RefreshState()
         {
             _blockedThroughFrame = Time.frameCount + 1; // Consume the click/key that closed a menu.
-            Cursor.lockState = HasModal ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = HasModal;
-            _hadPointerLock = Cursor.lockState == CursorLockMode.Locked;
+            bool lockCursor = !HasModal || IsGarageAimingActive;
+            Cursor.lockState = lockCursor ? CursorLockMode.Locked : CursorLockMode.None;
+            Cursor.visible = !lockCursor;
             RefreshTimeScale();
         }
 
         private void RefreshTimeScale()
         {
             bool online = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
-            bool garage = LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsGarageOpen;
-            Time.timeScale = !online && (IsPauseMenuOpen || garage) ? 0f : 1f;
+            Time.timeScale = (!online && IsPauseMenuOpen) ? 0f : 1f;
         }
 
         private void OnApplicationFocus(bool focused)
         {
-            if (!focused) OpenPauseMenu();
+            if (focused && (!HasModal || IsGarageAimingActive))
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
         }
 
         private void OnDisable()
@@ -139,8 +190,12 @@ namespace Lego2KDrive
             bool online = LegoMultiplayerRoomManager.Instance != null && LegoMultiplayerRoomManager.Instance.IsConnected;
             GUILayout.Label(online ? "Dang online: cuoc dua van tiep tuc." : "Game dang tam dung.");
             if (GUILayout.Button("TIEP TUC [ESC]", GUILayout.Height(38))) Resume();
-            if (GUILayout.Button("GARAGE [TAB]", GUILayout.Height(38))) ToggleGarage();
-            if (LegoRaceManagerAndHUD.Instance.IsPlayerOnFoot && GUILayout.Button("TUI DO [B / I]", GUILayout.Height(38))) ToggleInventory();
+            bool inTestDrive = LegoGarageBuilder.Instance != null && LegoGarageBuilder.Instance.IsInTestDrive;
+            bool canGarage = inTestDrive || (LegoRaceManagerAndHUD.Instance != null && LegoRaceManagerAndHUD.Instance.CanOpenGarageNow);
+            GUI.enabled = canGarage;
+            string garageLabel = inTestDrive ? "THOAT LAI THU -> GARAGE [TAB]" : "GARAGE [TAB]";
+            if (GUILayout.Button(garageLabel, GUILayout.Height(38))) ToggleGarage();
+            GUI.enabled = true;
             if (GUILayout.Button("PHONG MULTIPLAYER [P]", GUILayout.Height(38))) ToggleRoom();
             if (LegoRaceManagerAndHUD.Instance.IsPlayerOnFoot)
             {

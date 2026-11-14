@@ -414,6 +414,7 @@
 -analyzer:"D:/app_material/Unity/Editor/6000.3.28f1/Editor/Data/Tools/BuildPipeline/Unity.SourceGenerators/Unity.SourceGenerators.dll"
 -analyzer:"D:/app_material/Unity/Editor/6000.3.28f1/Editor/Data/Tools/BuildPipeline/Unity.SourceGenerators/Unity.UIToolkit.SourceGenerator.dll"
 "Assets/Editor/Lego2KDriveSceneSetupEditor.cs"
+"Assets/Editor/LegoGameplaySmokeTests.cs"
 -langversion:9.0
 /deterministic
 /optimize+
